@@ -14,7 +14,7 @@ export const privacyHtml = `<!doctype html>
 <h2>eBay account deletion</h2>
 <p>The tool is subscribed to eBay's marketplace account deletion notifications. Because no eBay user data is stored, there is nothing to delete; each notification is acknowledged and recorded without personal data.</p>
 <h2>Contact</h2>
-<p>Intra AI, <a href="https://intra-ai.de">intra-ai.de</a>, it@intra-ai.de</p>
+<p>Intra AI, <a href="https://intra-ai.de">intra-ai.de</a>, info@intra-ai.de</p>
 </body>
 </html>
 `;

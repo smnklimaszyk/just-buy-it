@@ -26,6 +26,14 @@ describe("GET /privacy", () => {
     expect(res.headers.get("content-type")).toMatch(/^text\/html/);
     expect(await res.text()).toContain("Intra AI");
   });
+
+  it("names info@intra-ai.de as the contact", async () => {
+    const app = createApp({ endpointUrl, verificationToken, onNotification: () => undefined });
+
+    const res = await app.request("/privacy");
+
+    expect(await res.text()).toContain("info@intra-ai.de");
+  });
 });
 
 describe("GET /ebay/account-deletion", () => {
