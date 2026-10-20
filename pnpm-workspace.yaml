@@ -1,0 +1,11 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Native parsers pulled in by tdd-guard-vitest; their install scripts are not needed.
+allowBuilds:
+  "@ast-grep/lang-go": false
+  "@ast-grep/lang-php": false
+  "@ast-grep/lang-python": false
+  "@ast-grep/lang-ruby": false
+  "@ast-grep/lang-rust": false

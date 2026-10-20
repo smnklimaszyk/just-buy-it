@@ -1,0 +1,27 @@
+name: ebay-sniper
+
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    image: ebay-sniper-server:local
+    restart: unless-stopped
+    env_file: /opt/ebay-sniper/.env
+    environment:
+      PORT: "3000"
+    ports:
+      - "127.0.0.1:3140:3000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
