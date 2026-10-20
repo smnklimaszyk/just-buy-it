@@ -9,11 +9,21 @@ services:
         GIT_SHA: ${GIT_SHA:?GIT_SHA is required}
     image: ebay-sniper-server:${GIT_SHA:?GIT_SHA is required}
     restart: unless-stopped
-    stop_grace_period: 10s
-    env_file: /opt/ebay-sniper/.env
+    # SIGTERM: drain 10 s, final count flush 2 s, pool end 1 s, hard stop at 14 s, SIGKILL at 15 s.
+    stop_grace_period: 15s
+    # An explicit list instead of the whole .env, so the server never sees POSTGRES_PASSWORD or a
+    # secret meant for another service. Values come from the deploy's --env-file.
     environment:
       PORT: "3000"
       TZ: UTC
+      EBAY_ENVIRONMENT: ${EBAY_ENVIRONMENT:?EBAY_ENVIRONMENT is required}
+      EBAY_DELETION_ENDPOINT_URL: ${EBAY_DELETION_ENDPOINT_URL:?EBAY_DELETION_ENDPOINT_URL is required}
+      EBAY_DELETION_VERIFICATION_TOKEN: ${EBAY_DELETION_VERIFICATION_TOKEN:?EBAY_DELETION_VERIFICATION_TOKEN is required}
+      EBAY_CLIENT_ID: ${EBAY_CLIENT_ID:-}
+      EBAY_CLIENT_SECRET: ${EBAY_CLIENT_SECRET:-}
+      DELETION_PROBE_CODE: ${DELETION_PROBE_CODE:?DELETION_PROBE_CODE is required}
+      # The app role: SELECT, INSERT and UPDATE on the deletion tables only, not the superuser.
+      DATABASE_URL: postgres://app:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@postgres:5432/ebay_sniper
     # No depends_on: the deletion endpoint must answer while Postgres is down (A4).
     ports:
       - "127.0.0.1:3140:3000"
@@ -72,6 +82,8 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://ebay_sniper:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/ebay_sniper
+      # Set as the app role password on every run, then checked by connecting as app.
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}
       TZ: UTC
     working_dir: /app/apps/ops
     command: ["node", "dist/main.js", "migrate"]

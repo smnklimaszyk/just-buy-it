@@ -9,6 +9,8 @@ const valid = {
   EBAY_CLIENT_ID: "app-id",
   EBAY_CLIENT_SECRET: "cert-id",
   GIT_SHA: "0123456789abcdef0123456789abcdef01234567",
+  DATABASE_URL: "postgres://app:apppass@postgres:5432/ebay_sniper",
+  DELETION_PROBE_CODE: "Pr0be_code-0123456789abcdefghijABCDEFGHI",
 };
 
 describe("parseEnv", () => {
@@ -21,11 +23,20 @@ describe("parseEnv", () => {
       ebayClientId: "app-id",
       ebayClientSecret: "cert-id",
       gitSha: "0123456789abcdef0123456789abcdef01234567",
+      databaseUrl: "postgres://app:apppass@postgres:5432/ebay_sniper",
+      deletionProbeCode: "Pr0be_code-0123456789abcdefghijABCDEFGHI",
     });
   });
 
   it("starts without eBay client credentials so the challenge works before they exist", () => {
     const env = parseEnv({ ...valid, EBAY_CLIENT_ID: undefined, EBAY_CLIENT_SECRET: undefined });
+
+    expect(env.ebayClientId).toBeUndefined();
+    expect(env.ebayClientSecret).toBeUndefined();
+  });
+
+  it("reads empty eBay credentials as absent, as Compose passes them when unset", () => {
+    const env = parseEnv({ ...valid, EBAY_CLIENT_ID: "", EBAY_CLIENT_SECRET: "" });
 
     expect(env.ebayClientId).toBeUndefined();
     expect(env.ebayClientSecret).toBeUndefined();
@@ -48,6 +59,37 @@ describe("parseEnv", () => {
       expect(() => parseEnv({ ...valid, GIT_SHA: sha })).toThrow();
     },
   );
+});
+
+describe("parseEnv database and probe values", () => {
+  it.each([undefined, "", "http://app:x@postgres:5432/ebay_sniper", "not a url"])(
+    "refuses a DATABASE_URL that is missing or not postgres: %s",
+    (url) => {
+      expect(() => parseEnv({ ...valid, DATABASE_URL: url })).toThrow("invalid environment: DATABASE_URL");
+    },
+  );
+
+  it.each([undefined, "", "a".repeat(39), "a".repeat(41), `${"a".repeat(39)}+`])(
+    "refuses a DELETION_PROBE_CODE that is missing or not 40 URL-safe characters: %s",
+    (code) => {
+      expect(() => parseEnv({ ...valid, DELETION_PROBE_CODE: code })).toThrow("invalid environment: DELETION_PROBE_CODE");
+    },
+  );
+});
+
+describe("parseEnv errors", () => {
+  it("names the failing variables and never their values", () => {
+    const sentinel = "sentinel-token-value!";
+
+    let message = "";
+    try {
+      parseEnv({ ...valid, EBAY_DELETION_VERIFICATION_TOKEN: sentinel, DATABASE_URL: `http://app:${sentinel}@db/x` });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toBe("invalid environment: EBAY_DELETION_VERIFICATION_TOKEN, DATABASE_URL");
+  });
 });
 
 describe("loadEnv", () => {

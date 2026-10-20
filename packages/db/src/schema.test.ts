@@ -70,6 +70,17 @@ describe("app schema", () => {
     expect(result.rows[0]?.column_default).toBe("uuidv7()");
   });
 
+  it("keeps probe_seen to the one row with id 1", async () => {
+    const seenAt = new Date("2026-10-20T10:00:00.123Z");
+    await database.pool.query("INSERT INTO app.probe_seen (seen_at) VALUES ($1)", [seenAt]);
+
+    await expect(
+      database.pool.query("INSERT INTO app.probe_seen (id, seen_at) VALUES (2, $1)", [seenAt]),
+    ).rejects.toMatchObject({ code: "23514", constraint: "probe_seen_single_row" });
+    const rows = await database.pool.query<{ id: number; seen_at: Date }>("SELECT id, seen_at FROM app.probe_seen");
+    expect(rows.rows).toEqual([{ id: 1, seen_at: seenAt }]);
+  });
+
   it("has no column that names an eBay user (ADR 0013)", async () => {
     const all = await columns();
 

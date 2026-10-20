@@ -21,8 +21,8 @@ healthchecks.io checks watch worker, eBay, backups, deploys and host, alerting b
 | Check | Pinged by | Period / grace | Phase |
 |---|---|---|---|
 | `worker` | pg-boss cron job: `select 1`, queue counts | 5 min / 10 min | 0 |
-| `deletion-probe-seen` | worker job, only if `probe_seen` is under 15 min old | 5 min / 30 min | 0 |
-| `deploy` | deploy run (ADR 0029): success or `/fail` | 2 min / 10 min | 0 |
+| `deletion-probe-seen` | worker job, only if `probe_seen` is under 15 min old | 5 min / 30 min | 0 (S4) |
+| `deploy` | deploy run (ADR 0029): `/start`, then success or `/fail` | 365 days / 30 min | 0 (S3) |
 | `ebay` | same job: poll succeeded in 20 min, no breaker open | 5 min / 15 min | 1 |
 | `backup` | host timer: `/start`, success after rclone exits 0 (ADR 0025) | 1 day / 3 h | 1 |
 | `host` | systemd timer: disk, memory, load, our services running | 15 min / 15 min | 1 |
@@ -31,15 +31,18 @@ healthchecks.io checks watch worker, eBay, backups, deploys and host, alerting b
 | `restore-drill` | Simon after the drill checklist (ADR 0011) | 35 days / 1 day | 2 |
 
 - 9 of 20 checks; a new check joins this table in the PR that adds its ping.
+- `deploy` is pinged only by deploys, so a short period would mark it down after every deploy. healthchecks.io allows periods and grace times from 60 s to 365 days ([API docs](https://healthchecks.io/docs/api/), read 2026-10-20), and a `/start` without a success ping inside the grace time marks the check down ([docs](https://healthchecks.io/docs/measuring_script_run_time/)). With 365 days / 30 min, `/fail` alerts at once and a deploy that started but did not finish within 30 minutes alerts too; 30 minutes covers the 900 s migrate timeout, the build and the 60 s `/healthz` wait.
 - Grace times of 10, 15 and 30 minutes allow for cron jobs delayed by host load. `host` thresholds come from a week of phase 1 readings.
 - `worker`, `ebay`, `deletion-probe-seen` share the scheduler. `docs/runbooks/heartbeats.md` checks `host` first: high load suggests delay, green a stuck scheduler, a stopped service a dead container; `ebay` alone an eBay fault.
 
 Probe rules:
 - Monitor: `GET https://deals.intra-ai.de/ebay/account-deletion?challenge_code=<probe code>`; alert on status not 200 or missing expected `challengeResponse` (from the ADR 0013 shell vector).
 - `DELETION_PROBE_CODE`: 40 random chars from `[A-Za-z0-9_-]`, only in `/opt/ebay-sniper/.env` and the monitor URL (secrets register, ADR 0011).
-- The server answers every challenge alike. On a constant-time match with the probe code it upserts `app.probe_seen(seen_at)`, at most once a minute, skipping the write if the database is down. Reply has `Cache-Control: no-store`; no new outbound call (ADR 0007); the app never logs the probe code (ADR 0024).
+- The server answers every challenge alike. On a constant-time match with the probe code it upserts `app.probe_seen(seen_at)` (one row, overwritten) without waiting for the write, at most once a minute counted from the last attempt, so a down database is not hit on every probe; a failed write logs `probe_seen_unsaved` at most every 10 minutes. Every challenge reply has `Cache-Control: no-store`; no new outbound call (ADR 0007); the app never logs the probe code (ADR 0024).
 - Traefik access logging lives in the shared static config; our route file cannot strip the query. Phase 0: check on the host whether access logs record the query. If so, turn them off for our router (`observability.accessLogs: false`, if 3.6 allows) or record the exposure and add the logs to the probe code rotation steps.
 - Dated vendor pages go in `docs/compliance/vendors/` for the monthly terms diff.
+
+**S3 amendment (2026-10-20)**: the server writes `probe_seen` from S3. The worker job that pings `deletion-probe-seen`, the check and `HEALTHCHECKS_PING_URL_DELETION_PROBE_SEEN` come with the worker in S4; a ping from the server would be the very signal it is meant to check. Until S4, UptimeRobot alerts on endpoint faults, and nothing notices UptimeRobot itself stopping. The `deploy` check uses 365 days / 30 min with `/start` (above) instead of 2 min / 10 min.
 
 ## Alternatives considered
 
@@ -53,7 +56,7 @@ Probe rules:
 - Positive: the endpoint is checked as eBay reaches it, every 5 minutes; faults before the server raise both alerts; heartbeat mail needs neither SES nor the worker.
 - Negative: two vendors and register entries; a probe code leak means new code, env deploy, monitor update.
 - Negative: noisy neighbours can cause false `worker`, `ebay` or `deletion-probe-seen` alerts.
-- Risk: probe stops silently. Mitigation: `deletion-probe-seen` goes down within 35 minutes.
+- Risk: probe stops silently. Mitigation: `deletion-probe-seen` goes down within 35 minutes (from S4).
 - Risk: no free-plan email on healthchecks.io. Mitigation: phase 2 drill, UptimeRobot meanwhile, else paid plan.
 - Risk: host load delays the cron job. Mitigation: the grace times, phase 1 `host` readings before thresholds are fixed, runbook checks `host` first.
 - Risk: token, URL or probe code rotated without the monitor. Mitigation: the rotation runbook updates the monitor hash before saving in the eBay portal (ADR 0013).

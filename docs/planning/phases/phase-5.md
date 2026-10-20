@@ -13,7 +13,7 @@ If a review cut the product back to max-price alerts (D-07), 5A calibrates watch
 - **Licence:** anyone running this tool is responsible for complying with the eBay API License Agreement and eBay's policies for their use.
 - **Always kept:** call limits and budget (ADR 0016), minimal retention of listing content, no seller identifiers to Claude, no resale, no eBay content in git or eval cases, gate 3 (ADR 0002).
 - **Calibration limits:** tighten-only from stored data (D-28); at most two thresholds and one band boundary per round; at most one round a month (D-54). Loosening and method changes are tested forward (5A.8).
-- **Review (D-37):** CI green and a fresh-context Claude Code review before merge, by convention (no branch protection); Simon's go before each production deploy.
+- **Review (D-37):** CI green before merge (enforced by the `main` ruleset) and a fresh-context Claude Code review by convention; Simon's go before each production deploy.
 
 ## 3. Entry criteria
 

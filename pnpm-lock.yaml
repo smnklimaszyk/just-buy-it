@@ -212,6 +212,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@ebay-sniper/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@ebay-sniper/ebay':
         specifier: workspace:*
         version: link:../../packages/ebay

@@ -9,6 +9,8 @@ export type AppTokenCacheOptions = {
   fetchFn: FetchFn;
   clock: ClockLike;
   timeoutMs?: number;
+  // Called before every token POST, for api_usage_hourly. A cache hit makes no request.
+  onRequest?: () => void;
 };
 
 const REFRESH_EARLY_MS = 5 * 60_000;
@@ -52,6 +54,7 @@ export function createAppTokenCache(options: AppTokenCacheOptions): AppTokenCach
   async function requestToken(): Promise<string> {
     let response: Response;
     const timeout = AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    options.onRequest?.();
     try {
       response = await fetchFn(`${apiBase}/identity/v1/oauth2/token`, {
         method: "POST",

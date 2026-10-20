@@ -47,7 +47,7 @@ Every Claude call (triage, deep evaluation, the ADR 0020 single-image confirmati
 - The image re-encoding library is a new dependency: maintenance check needed.
 - No production traces: debugging uses the evaluation table, logs and team-owned replays.
 - Switching screening on needs a deploy with Simon's go.
-- No branch protection and no human reviewer (D-37): the fresh-context Claude review may share the writer's blind spots, so Simon's read of the constant and compliance-document diffs is the last check.
+- No human reviewer (D-37; the `main` ruleset enforces CI, not a review): the fresh-context Claude review may share the writer's blind spots, so Simon's read of the constant and compliance-document diffs is the last check.
 
 **Risks**
 - Simon rejects global inference (D-18): build the Google Cloud adapter, screening off until then (`"us"` does not help).

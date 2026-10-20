@@ -29,7 +29,7 @@ All decided by Simon Klimaszyk on 2026-10-19.
 | D-04 | Intra AI buys as a company by default. `buyer_profile` (`company` \| `private`, default `company`) per watch, private what-if in the dashboard, never stored ([guides/company-vs-private.md](guides/company-vs-private.md)) |
 | D-05/D-06 | Licence review is the operator's responsibility; out of scope for this repo |
 | D-07 | F1 max-price alerts first; F1 is the fallback, F2 is stop. 28 days after the first alert, continue, cut or stop is decided against 3 to 5 agreed numbers (D-08); stop if F1 is not clearly better than eBay's saved-search emails (ADR 0004) |
-| D-37 (updated) | Repository under Simon's personal GitHub account, GitHub Free, no branch protection for now. By convention: CI green and a fresh-context review before merge; Simon's go before each production deploy ([ADR 0029](../adr/0029-ci-cd-and-deploy.md)) |
+| D-37 (updated) | Repository under Simon's personal GitHub account, GitHub Free; a ruleset on `main` requires a pull request with green CI (2026-10-20). By convention: a fresh-context review before merge; Simon's go before each production deploy ([ADR 0029](../adr/0029-ci-cd-and-deploy.md)) |
 | D-48 | Ops alerts to Simon's mailbox. DMARC `p=none`, no `rua` |
 | Hosting | Existing Intra AI server (below), replaces the dedicated VPS in ADR 0012 |
 

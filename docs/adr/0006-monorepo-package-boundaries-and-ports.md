@@ -24,7 +24,7 @@
 | `ebay`, `llm`, `notify`, `db` | `domain` only | own SDKs | Adapters, infra modules |
 | `server` | `contracts`, `domain`, `logging`, adapters | any | Routes, auth, deletion endpoint, user CLI |
 | `worker` | `domain`, `logging`, adapters | any | Job handlers |
-| `ops` | `domain`, `db`, `logging` | any | `migrate`, backup sentinel; env = database URL only |
+| `ops` | `domain`, `db`, `logging` | any | `migrate`, backup sentinel; env = database URL plus the `app` role password (S3) |
 | `web` | `contracts` | React, Vite | Screens |
 
 Rules:
@@ -45,6 +45,11 @@ Rules:
 - `exports` allows only `.`, so ADR 0007's rule that the server imports only four `packages/ebay` modules cannot be checked by dependency-cruiser through the package entry. S1b keeps the single entry. One of the two rules is picked before S3.
 - In apps, `process.env` is read only in `apps/*/src/env.ts`; ESLint (`no-restricted-syntax`) enforces it in `apps/*/src/**`, tests excepted. Packages may not use the `process` global at all.
 - The `fromDrizzle` wording is settled in S4, when pg-boss arrives.
+
+**S3 amendment (2026-10-20)**:
+
+- `ops` env is the database URL plus the `app` role password (`POSTGRES_APP_PASSWORD`). `ops migrate` sets that password on role `app` after the migrations and then checks the role by connecting as `app`.
+- The S1b open point is decided: the single `exports` entry stays, and ADR 0007's rule that the server imports only four `packages/ebay` modules is dropped. dependency-cruiser cannot check modules behind one entry; `packages/ebay/src/index.ts` is short, so a new export shows in review.
 
 | Port | Adapters | Why |
 |---|---|---|

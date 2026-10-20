@@ -33,4 +33,18 @@ describe("main", () => {
       expect.objectContaining({ loadEnv, runMigrations: expect.any(Function), log: expect.any(Object) }),
     );
   });
+
+  it("passes the migrate and app role functions of the db package to the migrate command", async () => {
+    await runMain(["migrate"]);
+
+    const { runMigrateCommand } = await import("./migrate-command.js");
+    const db = await import("@ebay-sniper/db");
+    expect(runMigrateCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runMigrations: db.runMigrations,
+        setAppRolePassword: db.setAppRolePassword,
+        checkAppRole: db.checkAppRole,
+      }),
+    );
+  });
 });

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { afterEach, describe, expect, inject, it } from "vitest";
 import { MIGRATE_LOCK_KEY, MigrateLockTimeoutError, MigrationHistoryError, runMigrations } from "./migrate.js";
+import { ROLE_LOCK_KEY } from "./role-lock.js";
 import { createTestDatabase, type TestDatabase } from "./testing/database.js";
 
 const adminUrl = inject("testDatabaseAdminUrl");
@@ -306,11 +307,42 @@ describe("runMigrations", () => {
 
     await runMigrations({ connectionString: database.url, log: (entry) => lines.push(entry) });
 
-    expect(lines.map((line) => line.step)).toEqual(["lock_acquired", "history", "drizzle", "done"]);
+    expect(lines.map((line) => line.step)).toEqual(["lock_acquired", "history", "role_lock_acquired", "drizzle", "done"]);
     expect(lines.find((line) => line.step === "drizzle")).toMatchObject({ applied: journalEntries });
     for (const line of lines) expect(line).toMatchObject({ event: "migrate", duration_ms: expect.any(Number) });
     const password = new URL(database.url).password;
     expect(JSON.stringify(lines)).not.toContain(password);
+  });
+
+  it("runs the drizzle step only once the cluster-wide role lock in the postgres database is free", async () => {
+    const database = await emptyDatabase();
+    const postgresUrl = new URL(adminUrl);
+    postgresUrl.pathname = "/postgres";
+    const holder = new pg.Client({ connectionString: postgresUrl.toString() });
+    await holder.connect();
+    const lines: { step: string; released: boolean }[] = [];
+    let released = false;
+    try {
+      await holder.query("SELECT pg_advisory_lock($1)", [ROLE_LOCK_KEY.toString()]);
+      const run = runMigrations({
+        connectionString: database.url,
+        log: (entry) => lines.push({ step: entry.step, released }),
+        lockRetryMs: 50,
+      });
+      await expect.poll(() => lines.map((line) => line.step)).toContain("history");
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(lines.map((line) => line.step)).not.toContain("role_lock_acquired");
+      expect(await appliedHashes(database)).toBe(0);
+
+      released = true;
+      await holder.query("SELECT pg_advisory_unlock($1)", [ROLE_LOCK_KEY.toString()]);
+      await run;
+    } finally {
+      await holder.end();
+    }
+
+    expect(lines.find((line) => line.step === "role_lock_acquired")).toEqual({ step: "role_lock_acquired", released: true });
+    expect(await appliedHashes(database)).toBe(journalEntries);
   });
 
   it("gives up connecting to an unreachable host within 15 s", { timeout: 20_000 }, async () => {

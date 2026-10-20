@@ -1,20 +1,22 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { setTimeout as sleep } from "node:timers/promises";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import pg from "pg";
+import { acquireAdvisoryLock, withRoleLock } from "./role-lock.js";
+
+export { MigrateLockTimeoutError } from "./role-lock.js";
 
 export const MIGRATE_LOCK_KEY = 7305508719803918704n; // 0x65626179736e6970, ASCII "ebaysnip"
-
-export class MigrateLockTimeoutError extends Error {}
 
 export class MigrationHistoryError extends Error {}
 
 export type MigrateLog = (entry: { event: "migrate"; step: string; [key: string]: unknown }) => void;
 export type MigrateResult = { drizzleApplied: number; newerThanRelease: number };
+
+const ROLE_LOCK_ATTEMPTS = 120;
 
 const DEFAULT_MIGRATIONS_FOLDER = fileURLToPath(new URL("../migrations/", import.meta.url));
 
@@ -46,7 +48,12 @@ export async function runMigrations(options: {
     // A migration waiting on a table lock, or a runaway statement, fails instead of holding the deploy.
     await client.query("SET lock_timeout = '10s'");
     await client.query("SET statement_timeout = '5min'");
-    const attempts = await acquireLock(client, lockAttempts, lockRetryMs);
+    const attempts = await acquireAdvisoryLock(
+      client,
+      MIGRATE_LOCK_KEY,
+      { attempts: lockAttempts, retryMs: lockRetryMs },
+      "another migrate run held the lock",
+    );
     logStep("lock_acquired", { attempts });
     try {
       // ADR 0008: new sessions run in UTC whatever the server default is.
@@ -56,12 +63,21 @@ export async function runMigrations(options: {
       const newerThanRelease = await checkHistory(client, migrationsFolder);
       const before = await countApplied(client);
       logStep("history", { applied: before, newer_than_release: newerThanRelease });
-      await migrate(drizzle(client), {
-        migrationsFolder,
-        migrationsSchema: "drizzle",
-        migrationsTable: "__drizzle_migrations",
-      });
-      const drizzleApplied = (await countApplied(client)) - before;
+      // Lock order is always this database's lock, then the role lock. The role lock waits its own
+      // 120 attempts: other databases of the cluster hold it only for their drizzle step.
+      const drizzleApplied = await withRoleLock(
+        options.connectionString,
+        { attempts: ROLE_LOCK_ATTEMPTS, retryMs: lockRetryMs },
+        async (roleLockAttempts) => {
+          logStep("role_lock_acquired", { attempts: roleLockAttempts });
+          await migrate(drizzle(client), {
+            migrationsFolder,
+            migrationsSchema: "drizzle",
+            migrationsTable: "__drizzle_migrations",
+          });
+          return (await countApplied(client)) - before;
+        },
+      );
       logStep("drizzle", { applied: drizzleApplied });
       options.log({
         event: "migrate",
@@ -79,18 +95,6 @@ export async function runMigrations(options: {
   } finally {
     await client.end();
   }
-}
-
-// Counting attempts instead of measuring elapsed time keeps the clock out of the runner.
-async function acquireLock(client: pg.Client, attempts: number, retryMs: number): Promise<number> {
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    const result = await client.query<{ locked: boolean }>("SELECT pg_try_advisory_lock($1) AS locked", [
-      MIGRATE_LOCK_KEY.toString(),
-    ]);
-    if (result.rows[0]?.locked === true) return attempt;
-    if (attempt < attempts) await sleep(retryMs);
-  }
-  throw new MigrateLockTimeoutError(`another migrate run held the lock for ${attempts} attempts`);
 }
 
 type AppliedMigration = { hash: string; createdAt: number };

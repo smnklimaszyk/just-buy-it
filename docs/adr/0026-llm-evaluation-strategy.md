@@ -49,7 +49,7 @@ Each change to evaluator config, prompts, schema, model, effort or rubric passes
   - A copied listing (attestation, review).
   - Hand-built cases differ from real ones (hard negatives, field metrics, shadow sample).
   - Run-to-run variance makes gates flaky (majority of 3; unstable cases reported, not gated, unless critical).
-  - A PR edits `evals.yml` to post success (the agent token cannot change workflows, dispatch `evals.yml` or post statuses; policy checks run from base). With no branch protection (D-37), the status holds by convention and Simon reads `.github/` and `evals/` diffs.
+  - A PR edits `evals.yml` to post success (the agent token cannot change workflows, dispatch `evals.yml` or post statuses; policy checks run from base). The `main` ruleset requires only `checks` and `zizmor` (D-37), so this status holds by convention and Simon reads `.github/` and `evals/` diffs.
   - A spend limit trips mid-gate (separate workspace; status `error`).
 
 ## Revisit when

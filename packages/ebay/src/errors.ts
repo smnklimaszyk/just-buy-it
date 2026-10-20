@@ -7,7 +7,9 @@ export type EbayErrorKind =
   | "client_error"
   | "server_error"
   | "invalid_response"
-  | "quota_refused";
+  | "quota_refused"
+  // No eBay credentials configured, so no request was sent.
+  | "not_configured";
 
 export type EbayOperation = "token" | "public_key" | "search";
 

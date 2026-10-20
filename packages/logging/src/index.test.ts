@@ -57,6 +57,26 @@ describe("loggerOptions", () => {
   });
 });
 
+describe("loggerOptions user fields", () => {
+  it("redacts data.username, data.userId and data.eiasToken at depths 0 to 2", () => {
+    const user = { username: "secret-username", userId: "secret-user-id", eiasToken: "secret-eias-token", other: "kept" };
+    const hidden = { username: "[redacted]", userId: "[redacted]", eiasToken: "[redacted]", other: "kept" };
+
+    const logged = logOnce({
+      data: user,
+      notification: { data: user },
+      body: { notification: { data: user } },
+    });
+
+    expect(logged).toMatchObject({
+      data: hidden,
+      notification: { data: hidden },
+      body: { notification: { data: hidden } },
+    });
+    expect(JSON.stringify(logged)).not.toMatch(/secret-/);
+  });
+});
+
 describe("createLogger", () => {
   it("builds a pino logger from the given options", () => {
     const logger = createLogger(loggerOptions("warn"));

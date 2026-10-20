@@ -217,6 +217,30 @@ describe("createAppTokenCache", () => {
     expect(ebay.calls).toHaveLength(1);
   });
 
+  it("calls onRequest once before each token POST and not on a cache hit or for a shared request", async () => {
+    const events: string[] = [];
+    const now = { value: 0 };
+    const cache = createAppTokenCache({
+      apiBase: "https://api.ebay.com",
+      clientId: "app-id",
+      clientSecret: "cert-id",
+      fetchFn: async () => {
+        events.push("fetch");
+        return tokenResponse(`token-${events.length}`);
+      },
+      clock: clockAt(now),
+      onRequest: () => events.push("onRequest"),
+    });
+
+    await Promise.all([cache.get(), cache.get(), cache.get()]);
+    await cache.get();
+    expect(events).toEqual(["onRequest", "fetch"]);
+
+    now.value = 116 * 60_000;
+    await cache.get();
+    expect(events).toEqual(["onRequest", "fetch", "onRequest", "fetch"]);
+  });
+
   it("never puts the token or the client secret into an error", async () => {
     const cache = createAppTokenCache({
       apiBase: "https://api.ebay.com",

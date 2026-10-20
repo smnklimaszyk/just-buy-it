@@ -15,6 +15,20 @@
       "when": 1792490417186,
       "tag": "0001_reserve_ebay_call",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792498536653,
+      "tag": "0002_probe_seen",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792498686455,
+      "tag": "0003_app_role",
+      "breakpoints": true
     }
   ]
 }

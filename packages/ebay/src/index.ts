@@ -1,7 +1,7 @@
 export { EbayError, type EbayErrorKind, type EbayOperation } from "./errors.js";
 export type { AppTokenCache, ClockLike, FetchFn } from "./http.js";
 export { createAppTokenCache, type AppTokenCacheOptions } from "./token.js";
-export { createPublicKeyClient, type PublicKeyClientOptions } from "./public-key.js";
+export { createPublicKeyClient, type KeyLookup, type PublicKeyClientOptions } from "./public-key.js";
 export {
   createBrowseClient,
   type BrowseCallContext,

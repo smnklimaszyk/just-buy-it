@@ -4,17 +4,35 @@ import { z } from "zod";
 const PEM_START = "-----BEGIN PUBLIC KEY-----";
 const PEM_END = "-----END PUBLIC KEY-----";
 
-// The kid ends up in an eBay API path, so only plain tokens are accepted.
+// ADR 0013: a key id is 1 to 128 printable ASCII characters. The key client puts it into the URL
+// path with encodeURIComponent, which leaves "." and ".." alone, and fetch would resolve those to
+// another eBay path, so they are refused too.
 const signatureHeaderSchema = z.object({
-  kid: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  alg: z.string().max(32),
+  kid: z
+    .string()
+    .regex(/^[\x20-\x7E]{1,128}$/)
+    .refine((kid) => kid !== "." && kid !== ".."),
   signature: z.string().min(1).max(512),
+  digest: z.string().max(32),
 });
 
-export type SignatureHeader = z.infer<typeof signatureHeaderSchema>;
+export type SignatureHeader =
+  | { ok: true; kid: string; signature: string }
+  | { ok: false; result: "malformed" | "unsupported_alg" };
 
 export function parseSignatureHeader(header: string): SignatureHeader {
-  const { kid, signature } = signatureHeaderSchema.parse(JSON.parse(Buffer.from(header, "base64").toString("utf8")));
-  return { kid, signature };
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
+  } catch {
+    return { ok: false, result: "malformed" };
+  }
+  const parsed = signatureHeaderSchema.safeParse(decoded);
+  if (!parsed.success) return { ok: false, result: "malformed" };
+  const { alg, kid, signature, digest } = parsed.data;
+  if (alg.toLowerCase() !== "ecdsa" || digest.toUpperCase() !== "SHA1") return { ok: false, result: "unsupported_alg" };
+  return { ok: true, kid, signature };
 }
 
 export function challengeResponse(challengeCode: string, verificationToken: string, endpoint: string): string {

@@ -57,10 +57,11 @@ Production: `/opt/ebay-sniper/.env`, `root:root 600`, every value also in the PM
 | eBay App ID, Cert ID (prod) | server, worker, contract | `.env`, PM | Application Keys page | Reset Cert ID on leak or holder change |
 | eBay Dev ID, sandbox keyset | nobody / manual tests | PM | With the keyset | On leak |
 | Deletion verification token | server | `.env`, PM | 64 chars | `.env`, restart, then portal |
-| `DELETION_PROBE_CODE` | server, UptimeRobot | `.env`, monitor URL | 40 chars | On leak, with the monitor URL |
-| `POSTGRES_PASSWORD`, `app`, `migrator` | db bootstrap; apps; migrate | `.env`, PM | `openssl rand -hex 32` (hex, because Compose embeds it in a URL). Phase 0 S1b has only `POSTGRES_PASSWORD`, see section 4 | On leak (`ALTER ROLE`, `.env`, restart) |
+| `DELETION_PROBE_CODE` | server, UptimeRobot; checked by the deploy | `.env`, PM, monitor URL | 40 chars | On leak, with the monitor URL |
+| `POSTGRES_PASSWORD` | db bootstrap; migrate (role `ebay_sniper`) | `.env`, PM | `openssl rand -hex 32` (hex, because Compose embeds it in a URL). A separate `migrator` role comes in Phase 1, see section 4 | On leak (`ALTER ROLE`, `.env`, restart) |
+| `POSTGRES_APP_PASSWORD` | server (role `app`); migrate sets it | `.env`, PM | `openssl rand -hex 32`, 64 hex chars; the deploy refuses other values | On leak: `.env` and PM, then run the migrate service (it sets the new password) and restart the server; a deploy of the running SHA is a no-op |
 | `backup_dump` password | backup job | `.env` (backup service), PM | SELECT on `app`, `auth`, `drizzle`, allowed `pgboss` tables; none on `ebay_live` | On leak |
-| healthchecks.io ping URLs | worker, server, backup, deploy | `.env`; `deploy` URL in a root-only file | [ADR 0030](../adr/0030-heartbeats-and-external-probe.md) | On leak |
+| healthchecks.io ping URLs | worker, backup, deploy | `.env`; the `deploy` URL in `/opt/ebay-sniper/deploy-ping-url` (`root:root 600`, one line; without the file the deploy skips its pings), PM | [ADR 0030](../adr/0030-heartbeats-and-external-probe.md) | On leak |
 | SES key prod / dev | apps / local | `.env`, PM | `ses-sender-prod`; `ses-sender-dev` (simulator only) | On leak; prod yearly |
 | `BETTER_AUTH_SECRETS` | server | `.env`, PM | `1:` + `openssl rand -base64 32` | Prepend `2:new,`; drop old after sessions expire |
 | `ITEM_KEY_V1`, `ITEM_KEY_VERSION` | server, worker | `.env`, PM, offline copy | `openssl rand -base64 32` | Only on leak; loss breaks joins |
@@ -81,10 +82,13 @@ install -d -m 700 -o root -g root /opt/ebay-sniper
 install -m 600 -o root -g root /dev/null /opt/ebay-sniper/.env
 openssl rand -hex 32                                    # deletion token, 64 chars
 openssl rand -base64 30 | tr '+/' '-_' | tr -d '\n'    # DELETION_PROBE_CODE, 40 chars
-openssl rand -hex 32                                    # each Postgres password
+openssl rand -hex 32                                    # POSTGRES_PASSWORD, POSTGRES_APP_PASSWORD
 openssl rand -base64 32                                 # BETTER_AUTH_SECRETS entry, ITEM_KEY_V1
 stat -c '%U:%G %a' /opt/ebay-sniper/.env                # must print root:root 600
+install -m 600 -o root -g root /dev/null /opt/ebay-sniper/deploy-ping-url  # then write the healthchecks.io deploy URL into it
 ```
+
+Values must not contain `$`: Compose interpolates them into the server and migrate settings.
 
 Token rule: `^[A-Za-z0-9_-]{32,80}$`. Rotation: vendor console, `.env`, PM, `docker compose up -d`.
 
@@ -96,11 +100,12 @@ Token rule: `^[A-Za-z0-9_-]{32,80}$`. Rotation: vendor console, `.env`, PM, `doc
 |---|---|---|---|
 | `NODE_ENV`, `LOG_LEVEL`, `RUN_MODE` | all | 0 | pino level default `info`; `normal` or `restore-drill` |
 | `PORT`, `PUBLIC_BASE_URL` | server | 0 | Host publishes `127.0.0.1:3140`; `https://deals.intra-ai.de` |
-| `DATABASE_URL`, `MIGRATE_DATABASE_URL`, `POSTGRES_PASSWORD` | apps; migrate; db | 0 | `app` role; `migrator` role; bootstrap only. Phase 0 S1b: see below |
+| `DATABASE_URL` | server, migrate | 0 | Not in `.env`; Compose builds it, for the server with role `app`, for migrate with role `ebay_sniper`. `MIGRATE_DATABASE_URL` is not used in Phase 0. See below |
+| `POSTGRES_PASSWORD`, `POSTGRES_APP_PASSWORD` | Postgres bootstrap and migrate; migrate and the server's URL | 0 | Lowercase hex; the `app` password is 64 hex chars. See below |
 | `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET` | server, worker, contract | 0 | No token at startup, so a disabled keyset is harmless |
 | `EBAY_MARKETPLACE_ID`, `EBAY_ENDUSERCTX_POSTAL_CODE` | worker, contract | 0 | `EBAY_DE`; encoded into `X-EBAY-C-ENDUSERCTX` |
 | `EBAY_DELETION_ENDPOINT_URL` | server | 0 | Byte for byte the portal URL; absent, the route is skipped |
-| `EBAY_DELETION_VERIFICATION_TOKEN`, `DELETION_PROBE_CODE` | server | 0 | 64 chars; 40 chars, a challenge with it writes `probe_seen` |
+| `EBAY_DELETION_VERIFICATION_TOKEN`, `DELETION_PROBE_CODE` | server; the deploy checks the probe code | 0 | 64 chars; 40 chars of `[A-Za-z0-9_-]`, required (the server and the deploy refuse to start without it), a challenge with it writes `probe_seen` |
 | `HEALTHCHECKS_PING_URL_<CHECK>` | worker | 0, 1 | `WORKER`, `DELETION_PROBE_SEEN`; `EBAY`, `HOST`, `SES_SUPPRESSION` |
 | `CONTRACT_MAX_CALLS`, `CONTRACT_MIN_REMAINING` | contract | 0 | 100, 1500 (before polling starts) |
 | `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | server, worker | 1 | `eu-central-1`, `ses-sender-prod` |
@@ -110,7 +115,7 @@ Token rule: `^[A-Za-z0-9_-]{32,80}$`. Rotation: vendor console, `.env`, PM, `doc
 | `ANTHROPIC_API_KEY`, `_WORKSPACE_ID`, `_MONTHLY_LIMIT_USD` | worker, eval | 3 | Worker checks the `anthropic-workspace-id` header; limit 360 |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | eval | 3 | `https://cloud.langfuse.com` |
 
-**Phase 0 S1b (amended 2026-10-20)**: one database role, `ebay_sniper`, the image's superuser and owner of the `ebay_sniper` database, with `POSTGRES_PASSWORD` from `.env`. `DATABASE_URL` is not in `.env`: Compose builds it for the `migrate` service from `POSTGRES_PASSWORD`, and only the migrator connects in S1b. The server still loads the whole `.env` through `env_file`, so `POSTGRES_PASSWORD` sits in its environment although it does not connect; accepted for S1b, it goes away with the role split in S3. `POSTGRES_PASSWORD` takes effect only when the data volume is first created; a rotation is `ALTER ROLE ebay_sniper PASSWORD '...'` through `docker compose exec postgres psql`, then the `.env` edit and a deploy. `MIGRATE_DATABASE_URL` and the `app` role come with the role split, decided in S3 before the server connects.
+**Phase 0 S3 (2026-10-20)**: two database roles. `ebay_sniper` is the image's superuser, owner of the `ebay_sniper` database and the migrator, with `POSTGRES_PASSWORD` from `.env`; a separate non-superuser `migrator` role is deferred to Phase 1. `app` is the server's role: `LOGIN`, not superuser, `statement_timeout` 2 s, `SELECT`, `INSERT` and `UPDATE` on `deletion_event`, `deletion_result_hourly`, `api_usage_hourly` and `probe_seen` only. Migration `0003_app_role` creates it; on every deploy `ops migrate` then sets its password from `POSTGRES_APP_PASSWORD`, sent as a SCRAM verifier (never the plaintext) under a cluster-wide role lock, and checks it by connecting as `app` and running the server's writes in a rolled-back transaction. A failure stops the deploy before the server is replaced. `DATABASE_URL` is not in `.env`: Compose builds `postgres://app:${POSTGRES_APP_PASSWORD}@postgres:5432/ebay_sniper` for the server and the `ebay_sniper` URL for `migrate`, which also gets `POSTGRES_APP_PASSWORD`. The server no longer loads the whole `.env` through `env_file`; it gets an explicit variable list, so `POSTGRES_PASSWORD` and secrets meant for other services are not in its environment. `POSTGRES_PASSWORD` takes effect only when the data volume is first created; a rotation is `ALTER ROLE ebay_sniper PASSWORD '...'` through `docker compose exec postgres psql`, then the `.env` edit and a deploy.
 
 ## 5. Checks
 
