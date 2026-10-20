@@ -8,13 +8,14 @@ export type IncomingNotification = { rawBody: string; signatureHeader: string | 
 export type AppOptions = {
   endpointUrl: string;
   verificationToken: string;
+  gitSha: string;
   onNotification: (notification: IncomingNotification) => void;
 };
 
 export function createApp(options: AppOptions) {
   const app = new Hono();
 
-  app.get("/healthz", (c) => c.json({ status: "ok" }));
+  app.get("/healthz", (c) => c.json({ sha: options.gitSha }, 200, { "Cache-Control": "no-store" }));
   app.get("/privacy", (c) => c.html(privacyHtml));
 
   app.get("/ebay/account-deletion", (c) => {

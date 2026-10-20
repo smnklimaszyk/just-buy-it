@@ -28,7 +28,7 @@ Four environments (below) plus a restore-drill mode; no staging host. Intra AI h
 - **Backup verify**: `backup-verify.yml` (phase 2) is the only other workflow allowed a secret, the list-only verify key.
 - **Deletion probe**: UptimeRobot checks the endpoint, marking requests with `DELETION_PROBE_CODE` from the `.env` (ADR 0030).
 - **Restore drill**: `RUN_MODE=restore-drill` keeps the worker off and the notifier refusing; no eBay, Anthropic, SES or healthchecks.io values.
-- **Deploy**: on Simon's go, `ebay-deploy <sha>` on the host builds the image from a checkout with a read-only deploy key (ADR 0029); GHCR pull later; GitHub holds no host credential.
+- **Deploy**: on Simon's go, `ebay-deploy <sha>` on the host builds the image from a clone of the public repo over HTTPS (ADR 0029); GHCR pull later; GitHub holds no host credential.
 - **Anthropic limits**: `prod` $360 a month (31 x ADR 0028 lanes of $10 + $1.50), alerts at 50% and 80%; `eval` $50, then $190, then $260, +$40 in a sweep month; `dev` $20. No key in the Default or Claude Code workspace.
 
 Tables and `openssl` commands: [environments and secrets](../planning/environments-and-secrets.md).

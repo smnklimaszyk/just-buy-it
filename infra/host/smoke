@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Checks a deployed eBay deal monitor from outside: smoke <base-url> <expected-sha>
+# Example: infra/host/smoke https://deals.intra-ai.de 0123456789abcdef0123456789abcdef01234567
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: smoke <base-url> <expected-sha>" >&2
+  exit 2
+fi
+base="${1%/}"
+expected="$2"
+failures=0
+
+# check <name> <detail shown on failure> <test command...>
+check() {
+  local name="$1" detail="$2"
+  shift 2
+  if "$@"; then
+    echo "ok   $name"
+  else
+    echo "FAIL $name: $detail"
+    failures=$((failures + 1))
+  fi
+}
+
+status_of() {
+  # curl prints 000 when there is no answer.
+  curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null || true
+}
+
+body="$(curl -sS --max-time 10 "$base/healthz" 2>/dev/null || true)"
+check "/healthz reports $expected" "got '$body'" [ "$body" = "{\"sha\":\"$expected\"}" ]
+
+code="$(status_of "$base/privacy")"
+check "/privacy is 200" "got $code" [ "$code" = 200 ]
+
+reply="$(curl -sS --max-time 10 -w '\n%{http_code} %{content_type}' \
+  "$base/ebay/account-deletion?challenge_code=smoke" 2>/dev/null || true)"
+meta="${reply##*$'\n'}"
+challenge=no
+if [[ "$meta" == "200 application/json"* && "$reply" == *'"challengeResponse":"'* ]]; then challenge=yes; fi
+check "challenge is 200 JSON with challengeResponse" "got '$meta'" [ "$challenge" = yes ]
+
+code="$(status_of "$base/ebay/account-deletion")"
+check "challenge without code is 400" "got $code" [ "$code" = 400 ]
+
+path="/smoke-$RANDOM$RANDOM"
+code="$(status_of "$base$path")"
+check "$path is 404" "got $code" [ "$code" = 404 ]
+
+code="$(head -c 71680 /dev/zero | tr '\0' 'x' |
+  status_of -X POST -H 'content-type: application/json' --data-binary @- "$base/ebay/account-deletion")"
+check "70 KB POST to /ebay/account-deletion is 413" "got $code" [ "$code" = 413 ]
+
+if [[ $failures -gt 0 ]]; then
+  echo "$failures check(s) failed"
+  exit 1
+fi
+echo "all checks passed"

@@ -1,12 +1,15 @@
 # Traefik route for the eBay deal monitor (repo: ebay-sniper, compose project: ebay-sniper)
 # Container: ebay-sniper-server-1, published on 127.0.0.1:3140
+# Only /healthz, /privacy and /ebay/account-deletion are routed; any other path on this host
+# gets Traefik's default 404 and never reaches the container.
 # The rate limit is far above eBay's own traffic (at most about 1,500 deletion notifications a day),
-# so retries from eBay are never refused; it only stops floods. The app refuses bodies over 64 KB.
+# so retries from eBay are never refused; it only stops floods.
+# Request bodies over 64 KB get a 413 here (buffering middleware); the app refuses them too.
 
 http:
   routers:
     ebay-sniper-http:
-      rule: "Host(`deals.intra-ai.de`)"
+      rule: "Host(`deals.intra-ai.de`) && (Path(`/healthz`) || Path(`/privacy`) || Path(`/ebay/account-deletion`))"
       entryPoints:
         - web
       service: ebay-sniper
@@ -14,7 +17,7 @@ http:
         - redirect-to-https
 
     ebay-sniper-https:
-      rule: "Host(`deals.intra-ai.de`)"
+      rule: "Host(`deals.intra-ai.de`) && (Path(`/healthz`) || Path(`/privacy`) || Path(`/ebay/account-deletion`))"
       entryPoints:
         - websecure
       service: ebay-sniper
@@ -23,6 +26,7 @@ http:
       middlewares:
         - hsts-headers
         - ebay-sniper-ratelimit
+        - ebay-sniper-body-limit
 
   middlewares:
     ebay-sniper-ratelimit:
@@ -30,6 +34,10 @@ http:
         average: 10
         period: 1s
         burst: 50
+
+    ebay-sniper-body-limit:
+      buffering:
+        maxRequestBodyBytes: 65536
 
   services:
     ebay-sniper:

@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { parseEnv } from "./env.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { loadEnv, parseEnv } from "./env.js";
 
 const valid = {
   PORT: "3000",
@@ -8,6 +8,7 @@ const valid = {
   EBAY_DELETION_VERIFICATION_TOKEN: "a".repeat(64),
   EBAY_CLIENT_ID: "app-id",
   EBAY_CLIENT_SECRET: "cert-id",
+  GIT_SHA: "0123456789abcdef0123456789abcdef01234567",
 };
 
 describe("parseEnv", () => {
@@ -19,6 +20,7 @@ describe("parseEnv", () => {
       deletionVerificationToken: "a".repeat(64),
       ebayClientId: "app-id",
       ebayClientSecret: "cert-id",
+      gitSha: "0123456789abcdef0123456789abcdef01234567",
     });
   });
 
@@ -39,4 +41,23 @@ describe("parseEnv", () => {
       expect(() => parseEnv({ ...valid, EBAY_DELETION_VERIFICATION_TOKEN: token })).toThrow();
     },
   );
+
+  it.each([undefined, "", "0123456", "0123456789ABCDEF0123456789ABCDEF01234567", `${"a".repeat(40)}0`])(
+    "refuses a GIT_SHA that is not a full lowercase commit SHA: %s",
+    (sha) => {
+      expect(() => parseEnv({ ...valid, GIT_SHA: sha })).toThrow();
+    },
+  );
+});
+
+describe("loadEnv", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("reads the process environment", () => {
+    for (const [key, value] of Object.entries(valid)) vi.stubEnv(key, value);
+
+    expect(loadEnv().gitSha).toBe(valid.GIT_SHA);
+  });
 });

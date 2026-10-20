@@ -5,8 +5,11 @@ services:
     build:
       context: ..
       dockerfile: infra/Dockerfile
-    image: ebay-sniper-server:local
+      args:
+        GIT_SHA: ${GIT_SHA:?GIT_SHA is required}
+    image: ebay-sniper-server:${GIT_SHA:?GIT_SHA is required}
     restart: unless-stopped
+    stop_grace_period: 10s
     env_file: /opt/ebay-sniper/.env
     environment:
       PORT: "3000"

@@ -27,7 +27,7 @@ The app runs as its own Compose project `ebay-sniper` in `/opt/ebay-sniper` (ser
 | Compose | `pgdata` with fixed `name:`; `json-file` `max-size: 20m`, `max-file: 5`; `restart: unless-stopped`; `init: true` for Node; healthcheck per long-running service |
 | `mem_limit` (start) | postgres 2g, worker 1536m, server 768m, migrate 512m |
 | `stop_grace_period` | worker 180s (pg-boss graceful stop 170 s), server 30s, postgres 60s |
-| `/healthz` | Public, only `{"sha": "<commit>"}`, `no-store`; 200 if `select 1` answers within 2 s, else 503 |
+| `/healthz` | Public, only `{"sha": "<commit>"}`, `no-store`, 200. The `select 1` check (200 within 2 s, else 503) comes with the database |
 | Backups | Server's `/opt/backups` practice plus our own dump without listing content (ADR 0025) |
 | RTO | 4 hours, from the start of recovery until the deletion endpoint answers the challenge on `deals.intra-ai.de`. Inside the 4 hours: rebuild into a clean Compose project, data restore, DNS switch (TTL 300) and certificate. Same target on this host (Phase 0 S10 and monthly drill, ADR 0025) and on a fresh host (Phase 2 AC-3) |
 
@@ -58,7 +58,7 @@ The app runs as its own Compose project `ebay-sniper` in `/opt/ebay-sniper` (ser
 - Smoke script from outside: the three Phase 0 paths answer, all others including `/internal/listings` get 404 (A7); over 64 KB on the deletion path gets 413 (A3).
 - Proxy test: with a forged `X-Forwarded-For`, Better Auth sees the test client's address.
 - CI test over `docker compose config`: only server has `ports`, all on `127.0.0.1`; every service has `max-size`, `mem_limit`, `restart`, `stop_grace_period`; worker at least 180s.
-- Server test: `/healthz` returns only `sha`, 200 with a database, 503 without.
+- Server test: `/healthz` returns only `sha` with `no-store`. The 503-without-database test comes with the database.
 - Timed rebuild drill under 4 hours (A26); above that reopens this ADR.
 
 ## Revisit when

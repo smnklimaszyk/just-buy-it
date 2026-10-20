@@ -15,6 +15,9 @@ COPY apps/server apps/server
 RUN pnpm --filter "@ebay-sniper/server..." build
 
 FROM node:24.21.0-alpine
+ARG GIT_SHA
+RUN test -n "$GIT_SHA" || { echo "GIT_SHA build arg is required" >&2; exit 1; }
+ENV GIT_SHA=$GIT_SHA
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=deps --chown=node:node /repo ./

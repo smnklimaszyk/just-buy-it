@@ -16,7 +16,7 @@ Search, pricing, screening and alerts come next. The plan, decisions, ADRs and p
 ## Layout
 
 - `apps/server`: Hono server with the deletion endpoint, `/healthz` and `/privacy`
-- `infra/`: Dockerfile, Compose file and a Traefik route for a shared Docker host
+- `infra/`: Dockerfile, Compose file, a Traefik route and the deploy and smoke scripts for a shared Docker host
 - `docs/`: planning, decision register, ADRs, phase plans
 
 ## Requirements
@@ -44,17 +44,28 @@ Copy `.env.example` and fill in the values. On a server, keep the file readable 
 | `EBAY_DELETION_ENDPOINT_URL` | Public HTTPS URL of `/ebay/account-deletion`, exactly as entered in the eBay portal |
 | `EBAY_DELETION_VERIFICATION_TOKEN` | 32 to 80 characters of `[A-Za-z0-9_-]`, e.g. `openssl rand -hex 32` |
 | `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` | App ID and Cert ID of the keyset, used to fetch eBay's signing keys |
+| `GIT_SHA` | 40-character commit SHA reported by `/healthz`. The image build sets it; do not put it in `.env`. For a local run, export any 40-character hex value |
 
 ## Deploy
 
-The Compose file publishes the container on `127.0.0.1:3140` and expects a reverse proxy in front. `infra/traefik/ebay-sniper.yml` is a Traefik file-provider route; change the host name to your own domain.
+The Compose file publishes the container on `127.0.0.1:3140` and expects a reverse proxy in front. `infra/traefik/ebay-sniper.yml` is a Traefik file-provider route that passes only `/healthz`, `/privacy` and `/ebay/account-deletion` and refuses bodies over 64 KB; change the host name to your own domain.
+
+Install the deploy script and the route once (as root on the host; put `.env` in `/opt/ebay-sniper/.env` first):
 
 ```sh
-rsync -az --delete --exclude node_modules --exclude dist --exclude .git --exclude .claude ./ <host>:/opt/ebay-sniper/src/
-ssh <host> 'cd /opt/ebay-sniper/src && docker compose -f infra/docker-compose.yml up -d --build'
-ssh <host> 'cp /opt/ebay-sniper/src/infra/traefik/ebay-sniper.yml /opt/traefik/dynamic/ebay-sniper.yml'
-curl -s https://<your-domain>/healthz
+scp infra/host/ebay-deploy <host>:/usr/local/sbin/ebay-deploy
+ssh <host> chmod 755 /usr/local/sbin/ebay-deploy
+scp infra/traefik/ebay-sniper.yml <host>:/opt/traefik/dynamic/ebay-sniper.yml
 ```
+
+Deploy a commit that is on `main`, then check it from outside:
+
+```sh
+ssh <host> ebay-deploy <sha>
+infra/host/smoke https://<your-domain> <sha>
+```
+
+`ebay-deploy` clones the repository into `/opt/ebay-sniper/repo`, exports the commit to `/opt/ebay-sniper/releases/<sha>/`, builds and starts it with Compose and waits until `/healthz` reports the SHA. If that fails it starts the previous release again and exits 1. To roll back by hand, deploy an older SHA.
 
 Then subscribe the endpoint in the eBay developer portal (Application Keys, Notifications, Marketplace Account Deletion) with the same URL and token, and send a test notification. The server log should show `"verified":true`.
 

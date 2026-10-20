@@ -70,7 +70,6 @@ Production: `/opt/ebay-sniper/.env`, `root:root 600`, every value also in the PM
 | age identity | restore drill | PM plus offline copy; never on the host | `age-keygen` | On leak |
 | Anthropic `prod`, `eval`, `dev` | worker; evals; Simon | `.env`; repository secret; local; PM | Service accounts (365 days); personal in `dev` | On leak, yearly |
 | Langfuse keys | evals | Repository secret, PM | `https://cloud.langfuse.com` | On leak |
-| Read-only deploy key | `ebay-deploy` checkout on the host | `/root/.ssh/`, root-only; public half as a read-only GitHub deploy key | `ssh-keygen -t ed25519`, read access to this repository only | On leak or host change |
 | GHCR pull token (later) | host | `/root/.docker/config.json` | PAT on a machine account, `read:packages` | Yearly |
 
 ### Creating the production `.env`

@@ -9,6 +9,7 @@ const envSchema = z.object({
   EBAY_DELETION_VERIFICATION_TOKEN: z.string().regex(/^[A-Za-z0-9_-]{32,80}$/),
   EBAY_CLIENT_ID: z.string().min(1).optional(),
   EBAY_CLIENT_SECRET: z.string().min(1).optional(),
+  GIT_SHA: z.string().regex(/^[0-9a-f]{40}$/),
 });
 
 export type Env = {
@@ -18,6 +19,7 @@ export type Env = {
   deletionVerificationToken: string;
   ebayClientId: string | undefined;
   ebayClientSecret: string | undefined;
+  gitSha: string;
 };
 
 export function parseEnv(source: Record<string, string | undefined>): Env {
@@ -29,5 +31,10 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
     deletionVerificationToken: env.EBAY_DELETION_VERIFICATION_TOKEN,
     ebayClientId: env.EBAY_CLIENT_ID,
     ebayClientSecret: env.EBAY_CLIENT_SECRET,
+    gitSha: env.GIT_SHA,
   };
+}
+
+export function loadEnv(): Env {
+  return parseEnv(process.env);
 }

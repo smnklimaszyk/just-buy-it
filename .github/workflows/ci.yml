@@ -42,12 +42,23 @@ jobs:
         if: github.event_name == 'push'
         run: pnpm turbo run lint typecheck test build
 
+      - name: Root config lint
+        run: pnpm lint:root
+
       - name: Import rules
         run: pnpm depcruise
 
+      # --affected does not map infra/host/ to a package, so the deploy script tests always run.
+      - name: Shell scripts
+        run: |
+          shellcheck infra/host/ebay-deploy infra/host/smoke
+          pnpm turbo run test --filter=@ebay-sniper/deploy-selftest
+
       - name: Image build
         if: github.event_name == 'push'
-        run: docker build -f infra/Dockerfile .
+        run: docker build --build-arg GIT_SHA="$GIT_SHA" -f infra/Dockerfile .
+        env:
+          GIT_SHA: ${{ github.sha }}
 
   zizmor:
     runs-on: ubuntu-latest

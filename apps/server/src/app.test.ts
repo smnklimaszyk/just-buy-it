@@ -4,21 +4,23 @@ import { challengeResponse } from "./deletion.js";
 
 const endpointUrl = "https://deals.intra-ai.de/ebay/account-deletion";
 const verificationToken = "t".repeat(64);
+const gitSha = "0123456789abcdef0123456789abcdef01234567";
 
 describe("GET /healthz", () => {
-  it("reports ok without touching anything else", async () => {
-    const app = createApp({ endpointUrl, verificationToken, onNotification: () => undefined });
+  it("reports the running commit and is never cached", async () => {
+    const app = createApp({ endpointUrl, verificationToken, gitSha, onNotification: () => undefined });
 
     const res = await app.request("/healthz");
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: "ok" });
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(await res.text()).toBe(`{"sha":"${gitSha}"}`);
   });
 });
 
 describe("GET /privacy", () => {
   it("serves the privacy notice as HTML", async () => {
-    const app = createApp({ endpointUrl, verificationToken, onNotification: () => undefined });
+    const app = createApp({ endpointUrl, verificationToken, gitSha, onNotification: () => undefined });
 
     const res = await app.request("/privacy");
 
@@ -28,7 +30,7 @@ describe("GET /privacy", () => {
   });
 
   it("names info@intra-ai.de as the contact", async () => {
-    const app = createApp({ endpointUrl, verificationToken, onNotification: () => undefined });
+    const app = createApp({ endpointUrl, verificationToken, gitSha, onNotification: () => undefined });
 
     const res = await app.request("/privacy");
 
@@ -38,7 +40,7 @@ describe("GET /privacy", () => {
 
 describe("GET /ebay/account-deletion", () => {
   it("answers eBay's challenge with the hash as JSON", async () => {
-    const app = createApp({ endpointUrl, verificationToken, onNotification: () => undefined });
+    const app = createApp({ endpointUrl, verificationToken, gitSha, onNotification: () => undefined });
 
     const res = await app.request("/ebay/account-deletion?challenge_code=abc123");
 
@@ -48,7 +50,7 @@ describe("GET /ebay/account-deletion", () => {
   });
 
   it("rejects a GET without challenge_code with 400", async () => {
-    const app = createApp({ endpointUrl, verificationToken, onNotification: () => undefined });
+    const app = createApp({ endpointUrl, verificationToken, gitSha, onNotification: () => undefined });
 
     const res = await app.request("/ebay/account-deletion");
 
@@ -59,7 +61,7 @@ describe("GET /ebay/account-deletion", () => {
 describe("POST /ebay/account-deletion", () => {
   it("acknowledges with 204 and passes the raw body and signature header on", async () => {
     const received: IncomingNotification[] = [];
-    const app = createApp({ endpointUrl, verificationToken, onNotification: (n) => received.push(n) });
+    const app = createApp({ endpointUrl, verificationToken, gitSha, onNotification: (n) => received.push(n) });
     const body = JSON.stringify({ metadata: { topic: "MARKETPLACE_ACCOUNT_DELETION" } });
 
     const res = await app.request("/ebay/account-deletion", {
@@ -74,7 +76,7 @@ describe("POST /ebay/account-deletion", () => {
 
   it("refuses bodies over 64 KB with 413 and does not pass them on", async () => {
     const received: IncomingNotification[] = [];
-    const app = createApp({ endpointUrl, verificationToken, onNotification: (n) => received.push(n) });
+    const app = createApp({ endpointUrl, verificationToken, gitSha, onNotification: (n) => received.push(n) });
 
     const res = await app.request("/ebay/account-deletion", {
       method: "POST",
