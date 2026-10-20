@@ -23,9 +23,29 @@ export async function createTestDatabase(
     pool,
     async drop() {
       await pool.end();
+      // pool.end() resolves before the clients' sockets close. FORCE would terminate those clients,
+      // and the 57P01 they then emit has no listener left, so wait until the sessions are gone.
+      await waitForNoSessions(adminUrl, name);
       await adminQuery(adminUrl, `DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
     },
   };
+}
+
+async function waitForNoSessions(adminUrl: string, name: string): Promise<void> {
+  const client = new pg.Client({ connectionString: adminUrl });
+  await client.connect();
+  try {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const result = await client.query<{ sessions: number }>(
+        "SELECT count(*)::int AS sessions FROM pg_stat_activity WHERE datname = $1",
+        [name],
+      );
+      if (result.rows[0]?.sessions === 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  } finally {
+    await client.end();
+  }
 }
 
 export async function adminQuery(adminUrl: string, statement: string): Promise<void> {
