@@ -9,6 +9,17 @@
       "matchPackageNames": ["typescript", "pnpm", "turbo", "hono", "zod", "drizzle-orm", "drizzle-kit"],
       "matchUpdateTypes": ["major"],
       "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Stay on Drizzle 0.x until an ADR covers the 1.0 move (migration folder layout changes).",
+      "matchPackageNames": ["drizzle-orm", "drizzle-kit"],
+      "allowedVersions": "<1.0.0"
+    },
+    {
+      "description": "Postgres 19 needs a dump and restore of the data volume; stay on 18.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["postgres"],
+      "allowedVersions": "<19"
     }
   ]
 }

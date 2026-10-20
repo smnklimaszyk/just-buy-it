@@ -34,15 +34,27 @@ fi
 git -C "$repo" fetch --quiet origin main
 git -C "$repo" merge-base --is-ancestor "$sha" origin/main || die "$sha is not on origin/main, refusing"
 
+# ADR 0011: the secrets file is readable by root only.
+[[ "$(stat -c '%U:%G %a' "$root/.env")" == "root:root 600" ]] || die "$root/.env must be root:root 600"
+# Compose needs it for every command, and DATABASE_URL embeds it without URL encoding.
+grep -Eq '^POSTGRES_PASSWORD=[0-9a-f]+$' "$root/.env" ||
+  die "$root/.env must set POSTGRES_PASSWORD to a lowercase hex value (openssl rand -hex 32)"
+
 release="$root/releases/$sha"
 rm -rf "$release"
 mkdir -p "$release"
 git -C "$repo" archive --format=tar "$sha" | tar -x -C "$release"
 echo "ebay-deploy: exported $sha to $release"
 
+# Runs docker compose for the release of the SHA in $1 with the rest of the arguments.
+compose() {
+  GIT_SHA="$1" docker compose -p ebay-sniper --env-file "$root/.env" \
+    -f "$root/releases/$1/infra/docker-compose.yml" "${@:2}"
+}
+
+# Only the server: a Postgres health flap must not fail or roll back a healthy server.
 compose_up() {
-  GIT_SHA="$1" docker compose -p ebay-sniper -f "$root/releases/$1/infra/docker-compose.yml" \
-    up -d --build --wait --wait-timeout 120
+  compose "$1" up -d --build --wait --wait-timeout 120 server
 }
 
 # Polls /healthz for at most 60 seconds (20 tries of up to 2 s plus 1 s pause).
@@ -69,6 +81,28 @@ prune() {
     esac
   done
 }
+
+compose "$sha" build server || die "build of $sha failed, the running release is unchanged"
+
+echo "ebay-deploy: postgres: applying the config of $sha"
+compose "$sha" up -d --wait --wait-timeout 120 postgres ||
+  die "postgres for $sha is not healthy, the server still runs the old release"
+
+# The compose function cannot run under timeout, so the call is spelled out.
+echo "ebay-deploy: migrate: running the migrations of $sha"
+migrate_status=0
+timeout 900 env GIT_SHA="$sha" docker compose -p ebay-sniper --env-file "$root/.env" \
+  -f "$root/releases/$sha/infra/docker-compose.yml" run --rm --no-deps -T migrate || migrate_status=$?
+if ((migrate_status == 124)); then
+  # timeout stops the compose client, not the one-off container it started.
+  docker ps -q --filter label=com.docker.compose.project=ebay-sniper \
+    --filter label=com.docker.compose.service=migrate --filter label=com.docker.compose.oneoff=True |
+    xargs -r docker stop >/dev/null ||
+    echo "ebay-deploy: could not stop the leftover migrate container, check docker ps" >&2
+  die "migration for $sha timed out after 900 s, the running release is unchanged"
+fi
+((migrate_status == 0)) ||
+  die "migration for $sha failed (exit $migrate_status), the running release is unchanged"
 
 echo "ebay-deploy: starting $sha"
 if compose_up "$sha" && serves "$sha"; then

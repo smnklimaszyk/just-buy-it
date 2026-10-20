@@ -19,12 +19,15 @@ const script = fileURLToPath(new URL("../../../infra/host/ebay-deploy", import.m
 
 // Each fake appends "<name> <argv>" to $FAKE_DIR/log. docker records the SHA it started in
 // $FAKE_DIR/served; curl answers /healthz with that SHA unless it is listed in $FAKE_BAD_HEALTH.
+// docker fails `build` for SHAs in $FAKE_BUILD_FAIL, the postgres step when $FAKE_POSTGRES_FAIL=1
+// and the migrate run with exit 3 when $FAKE_MIGRATE_FAIL=1. stat prints $FAKE_ENV_MODE for an
+// existing file. timeout exits 124 without running its command when $FAKE_TIMEOUT=1.
 const fakes: Record<string, string> = {
   git: `#!/usr/bin/env bash
 echo "git $*" >> "$FAKE_DIR/log"
 if [ "$1" = "-C" ]; then shift 2; fi
 case "$1" in
-  clone) mkdir -p "$3/.git" ;;
+  clone) mkdir -p "\${@: -1}/.git" ;;
   fetch) ;;
   merge-base) case " $FAKE_MAIN_SHAS " in *" $3 "*) exit 0 ;; *) exit 1 ;; esac ;;
   archive) tar -C "$FAKE_DIR/tree" -cf - . ;;
@@ -33,7 +36,14 @@ esac
 `,
   docker: `#!/usr/bin/env bash
 echo "docker GIT_SHA=\${GIT_SHA:-} $*" >> "$FAKE_DIR/log"
+case "$1" in
+  ps) if [ "$FAKE_PS_FAIL" = "1" ]; then exit 1; fi; echo "fake-migrate-container"; exit 0 ;;
+  stop) exit 0 ;;
+esac
 case " $* " in
+  *" run "*) if [ "$FAKE_MIGRATE_FAIL" = "1" ]; then exit 3; fi ;;
+  *" build "*) case " $FAKE_BUILD_FAIL " in *" $GIT_SHA "*) exit 1 ;; esac ;;
+  *" up "*" postgres ") if [ "$FAKE_POSTGRES_FAIL" = "1" ]; then exit 1; fi ;;
   *" up "*)
     case " $FAKE_COMPOSE_FAIL " in *" $GIT_SHA "*) exit 1 ;; esac
     echo "$GIT_SHA" > "$FAKE_DIR/served" ;;
@@ -52,6 +62,18 @@ echo "flock $*" >> "$FAKE_DIR/log"
 `,
   sleep: `#!/usr/bin/env bash
 `,
+  stat: `#!/usr/bin/env bash
+echo "stat $*" >> "$FAKE_DIR/log"
+file="\${*: -1}"
+[ -e "$file" ] || { echo "stat: cannot statx '$file': No such file or directory" >&2; exit 1; }
+echo "$FAKE_ENV_MODE"
+`,
+  timeout: `#!/usr/bin/env bash
+echo "timeout $*" >> "$FAKE_DIR/log"
+if [ "$FAKE_TIMEOUT" = "1" ]; then exit 124; fi
+shift
+exec "$@"
+`,
 };
 
 const shaA = "a".repeat(40);
@@ -69,6 +91,8 @@ beforeEach(() => {
   mkdirSync(join(fakeDir, "tree", "infra"), { recursive: true });
   writeFileSync(join(fakeDir, "tree", "infra", "docker-compose.yml"), "name: ebay-sniper\n");
   writeFileSync(join(fakeDir, "log"), "");
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, ".env"), "POSTGRES_PASSWORD=00\n");
   for (const [name, body] of Object.entries(fakes)) {
     const path = join(fakeDir, "bin", name);
     writeFileSync(path, body);
@@ -91,6 +115,7 @@ function deploy(sha: string, fakeEnv: Record<string, string> = {}) {
       FAKE_MAIN_SHAS: "",
       FAKE_COMPOSE_FAIL: "",
       FAKE_BAD_HEALTH: "",
+      FAKE_ENV_MODE: "root:root 600",
       ...fakeEnv,
     },
   });
@@ -127,6 +152,37 @@ describe("ebay-deploy", () => {
     expect(existsSync(join(root, "releases", shaB))).toBe(false);
   });
 
+  it("refuses a .env that is not root:root 600 before any docker call", () => {
+    const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB, FAKE_ENV_MODE: "root:root 644" });
+
+    expect(status).toBe(1);
+    expect(output).toContain(".env must be root:root 600");
+    expect(calls("docker")).toEqual([]);
+  });
+
+  it("refuses a missing .env before any docker call", () => {
+    rmSync(join(root, ".env"));
+
+    const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB });
+
+    expect(status).toBe(1);
+    expect(output).toContain(".env must be root:root 600");
+    expect(calls("docker")).toEqual([]);
+  });
+
+  it.each(["OTHER=1\n", "POSTGRES_PASSWORD=\n", "POSTGRES_PASSWORD=p@ss/word\n", "POSTGRES_PASSWORD=ABCDEF\n"])(
+    "refuses a .env without a lowercase hex POSTGRES_PASSWORD before any docker call: %j",
+    (env) => {
+      writeFileSync(join(root, ".env"), env);
+
+      const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB });
+
+      expect(status).toBe(1);
+      expect(output).toContain(`${root}/.env must set POSTGRES_PASSWORD to a lowercase hex value`);
+      expect(calls("docker")).toEqual([]);
+    },
+  );
+
   it("exits 0 without git or docker when the SHA is already running", () => {
     mkdirSync(join(root, "state"), { recursive: true });
     writeFileSync(join(root, "state", "running"), `${shaA}\n`);
@@ -155,15 +211,108 @@ describe("ebay-deploy", () => {
 
     expect(status).toBe(0);
     expect(output).toContain(`${shaB} is live`);
-    expect(calls("docker")).toEqual([
-      `docker GIT_SHA=${shaB} compose -p ebay-sniper -f ${root}/releases/${shaB}/infra/docker-compose.yml up -d --build --wait --wait-timeout 120`,
-    ]);
+    expect(calls("docker").at(-1)).toBe(
+      `docker GIT_SHA=${shaB} compose -p ebay-sniper --env-file ${root}/.env -f ${root}/releases/${shaB}/infra/docker-compose.yml up -d --build --wait --wait-timeout 120 server`,
+    );
     expect(calls("curl")[0]).toContain("https://deals.example.test/healthz");
     expect(readFileSync(join(root, "state", "running"), "utf8").trim()).toBe(shaB);
     expect(readFileSync(join(root, "state", "previous"), "utf8").trim()).toBe(old[0]);
     expect(existsSync(join(root, "releases", shaB, "infra", "docker-compose.yml"))).toBe(true);
     expect(existsSync(join(root, "releases", shaB, ".git"))).toBe(false);
     expect(readdirSync(join(root, "releases")).sort()).toEqual([old[0], old[3], old[4], old[5], old[6], shaB].sort());
+  });
+
+  it("builds, applies the postgres config, migrates and then starts only the server, each with the .env file", () => {
+    const compose = `compose -p ebay-sniper --env-file ${root}/.env -f ${root}/releases/${shaB}/infra/docker-compose.yml`;
+
+    const { status } = deploy(shaB, { FAKE_MAIN_SHAS: shaB });
+
+    expect(status).toBe(0);
+    expect(calls("docker")).toEqual([
+      `docker GIT_SHA=${shaB} ${compose} build server`,
+      `docker GIT_SHA=${shaB} ${compose} up -d --wait --wait-timeout 120 postgres`,
+      `docker GIT_SHA=${shaB} ${compose} run --rm --no-deps -T migrate`,
+      `docker GIT_SHA=${shaB} ${compose} up -d --build --wait --wait-timeout 120 server`,
+    ]);
+  });
+
+  it("logs the postgres and migrate steps", () => {
+    const { output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB });
+
+    expect(output).toContain(`ebay-deploy: postgres: applying the config of ${shaB}`);
+    expect(output).toContain(`ebay-deploy: migrate: running the migrations of ${shaB}`);
+  });
+
+  it("runs migrate under timeout 900", () => {
+    const { status } = deploy(shaB, { FAKE_MAIN_SHAS: shaB });
+
+    expect(status).toBe(0);
+    expect(calls("timeout")).toEqual([
+      `timeout 900 env GIT_SHA=${shaB} docker compose -p ebay-sniper --env-file ${root}/.env -f ${root}/releases/${shaB}/infra/docker-compose.yml run --rm --no-deps -T migrate`,
+    ]);
+  });
+
+  it("stops after a failed build without the postgres step, migrate or up", () => {
+    mkdirSync(join(root, "state"), { recursive: true });
+    writeFileSync(join(root, "state", "running"), `${shaA}\n`);
+
+    const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB, FAKE_BUILD_FAIL: shaB });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`build of ${shaB} failed, the running release is unchanged`);
+    expect(calls("docker")).toEqual([
+      `docker GIT_SHA=${shaB} compose -p ebay-sniper --env-file ${root}/.env -f ${root}/releases/${shaB}/infra/docker-compose.yml build server`,
+    ]);
+    expect(readFileSync(join(root, "state", "running"), "utf8").trim()).toBe(shaA);
+  });
+
+  it("stops when postgres does not get healthy, without migrate or the server up", () => {
+    mkdirSync(join(root, "state"), { recursive: true });
+    writeFileSync(join(root, "state", "running"), `${shaA}\n`);
+
+    const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB, FAKE_POSTGRES_FAIL: "1" });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`postgres for ${shaB} is not healthy, the server still runs the old release`);
+    expect(calls("docker").map((line) => line.split(" ").slice(-1)[0])).toEqual(["server", "postgres"]);
+    expect(calls("timeout")).toEqual([]);
+    expect(readFileSync(join(root, "state", "running"), "utf8").trim()).toBe(shaA);
+  });
+
+  it("stops when migrate fails, with the exit code, without the server up or a rollback", () => {
+    mkdirSync(join(root, "state"), { recursive: true });
+    writeFileSync(join(root, "state", "running"), `${shaA}\n`);
+
+    const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB, FAKE_MIGRATE_FAIL: "1" });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`migration for ${shaB} failed (exit 3), the running release is unchanged`);
+    expect(calls("docker").map((line) => line.split(" ").slice(-1)[0])).toEqual(["server", "postgres", "migrate"]);
+    expect(readFileSync(join(root, "state", "running"), "utf8").trim()).toBe(shaA);
+  });
+
+  it("stops the leftover migrate container and the deploy when migrate times out", () => {
+    mkdirSync(join(root, "state"), { recursive: true });
+    writeFileSync(join(root, "state", "running"), `${shaA}\n`);
+
+    const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB, FAKE_TIMEOUT: "1" });
+
+    expect(status).toBe(1);
+    expect(output).toContain(`migration for ${shaB} timed out after 900 s, the running release is unchanged`);
+    expect(calls("docker").slice(2)).toEqual([
+      "docker GIT_SHA= ps -q --filter label=com.docker.compose.project=ebay-sniper --filter label=com.docker.compose.service=migrate --filter label=com.docker.compose.oneoff=True",
+      "docker GIT_SHA= stop fake-migrate-container",
+    ]);
+    expect(readFileSync(join(root, "state", "running"), "utf8").trim()).toBe(shaA);
+  });
+
+  it("still reports the migrate timeout when the leftover container cannot be listed", () => {
+    const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB, FAKE_TIMEOUT: "1", FAKE_PS_FAIL: "1" });
+
+    expect(status).toBe(1);
+    expect(output).toContain("could not stop the leftover migrate container");
+    expect(output).toContain(`migration for ${shaB} timed out after 900 s`);
+    expect(calls("docker").filter((line) => line.includes(" up -d --build "))).toEqual([]);
   });
 
   it("rolls back to the running release when /healthz does not report the new SHA", () => {
@@ -175,10 +324,16 @@ describe("ebay-deploy", () => {
     const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB, FAKE_BAD_HEALTH: shaB });
 
     expect(status).toBe(1);
+    const composeB = `compose -p ebay-sniper --env-file ${root}/.env -f ${root}/releases/${shaB}/infra/docker-compose.yml`;
+    const composeA = `compose -p ebay-sniper --env-file ${root}/.env -f ${root}/releases/${shaA}/infra/docker-compose.yml`;
     expect(output).toContain(`rolled back to ${shaA}`);
+    // The rollback starts the old release without a postgres step or a migrate run.
     expect(calls("docker")).toEqual([
-      `docker GIT_SHA=${shaB} compose -p ebay-sniper -f ${root}/releases/${shaB}/infra/docker-compose.yml up -d --build --wait --wait-timeout 120`,
-      `docker GIT_SHA=${shaA} compose -p ebay-sniper -f ${root}/releases/${shaA}/infra/docker-compose.yml up -d --build --wait --wait-timeout 120`,
+      `docker GIT_SHA=${shaB} ${composeB} build server`,
+      `docker GIT_SHA=${shaB} ${composeB} up -d --wait --wait-timeout 120 postgres`,
+      `docker GIT_SHA=${shaB} ${composeB} run --rm --no-deps -T migrate`,
+      `docker GIT_SHA=${shaB} ${composeB} up -d --build --wait --wait-timeout 120 server`,
+      `docker GIT_SHA=${shaA} ${composeA} up -d --build --wait --wait-timeout 120 server`,
     ]);
     expect(readFileSync(join(fakeDir, "served"), "utf8").trim()).toBe(shaA);
     expect(readFileSync(join(root, "state", "running"), "utf8").trim()).toBe(shaA);
@@ -190,8 +345,9 @@ describe("ebay-deploy", () => {
 
     expect(status).toBe(1);
     expect(output).toContain("no previous release, stopped the new containers");
-    expect(calls("docker")).toEqual([
-      `docker GIT_SHA=${shaB} compose -p ebay-sniper -f ${root}/releases/${shaB}/infra/docker-compose.yml up -d --build --wait --wait-timeout 120`,
+    // down without -v keeps the Postgres volume.
+    expect(calls("docker").slice(-2)).toEqual([
+      `docker GIT_SHA=${shaB} compose -p ebay-sniper --env-file ${root}/.env -f ${root}/releases/${shaB}/infra/docker-compose.yml up -d --build --wait --wait-timeout 120 server`,
       "docker GIT_SHA= compose -p ebay-sniper down",
     ]);
     expect(existsSync(join(root, "state", "running"))).toBe(false);

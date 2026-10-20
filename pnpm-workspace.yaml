@@ -10,3 +10,5 @@ allowBuilds:
   "@ast-grep/lang-python": false
   "@ast-grep/lang-ruby": false
   "@ast-grep/lang-rust": false
+  # Pulled in by drizzle-kit. The platform binary comes from esbuild's optional dependencies.
+  esbuild: false

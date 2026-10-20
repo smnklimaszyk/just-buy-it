@@ -1,7 +1,8 @@
 import { serve } from "@hono/node-server";
+import { createAppTokenCache, createPublicKeyClient } from "@ebay-sniper/ebay";
 import { createLogger, loggerOptions } from "@ebay-sniper/logging";
 import { createApp, type IncomingNotification } from "./app.js";
-import { createPublicKeyClient } from "./ebay-keys.js";
+import { systemClock } from "./clock.js";
 import { loadEnv } from "./env.js";
 import { limitConcurrency, processNotification } from "./notifications.js";
 
@@ -13,10 +14,15 @@ const getKey =
   ebayClientId && ebayClientSecret
     ? createPublicKeyClient({
         apiBase: env.ebayApiBase,
-        clientId: ebayClientId,
-        clientSecret: ebayClientSecret,
+        token: createAppTokenCache({
+          apiBase: env.ebayApiBase,
+          clientId: ebayClientId,
+          clientSecret: ebayClientSecret,
+          fetchFn: fetch,
+          clock: systemClock,
+        }),
         fetchFn: fetch,
-        now: Date.now,
+        clock: systemClock,
       }).getKey
     : async () => {
         throw new Error("eBay client credentials are not configured");

@@ -14,7 +14,7 @@
 
 ## Decision
 
-Simon deploys on the host with `ebay-deploy <sha>` over SSH. Owner decision of 2026-10-20: until database migrations exist, the deploy is a simple script (below). The full version waits for the first migration (see "Later, when migrations exist"). Later CI pushes `sha-<commit>` to GHCR and the script pulls by digest instead of building.
+Simon deploys on the host with `ebay-deploy <sha>` over SSH. Owner decision of 2026-10-20: until database migrations exist, the deploy is a simple script (below). The first migration (S1b) adds the steps under "With the first migration (S1b)"; the rest waits (see "Later"). Later CI pushes `sha-<commit>` to GHCR and the script pulls by digest instead of building.
 
 **CI (`ci.yml`)**
 
@@ -43,16 +43,24 @@ Simon deploys on the host with `ebay-deploy <sha>` over SSH. Owner decision of 2
 
 A failure before step 4 leaves the running containers alone. Manual rollback is `ebay-deploy <older sha>`. After each deploy Simon runs `infra/host/smoke https://deals.intra-ai.de <sha>` from outside: `/healthz` reports the SHA, `/privacy` is 200, the challenge answers with `challengeResponse`, a GET without code is 400, other paths are 404 and a 70 KB POST is 413.
 
-**Later, when migrations exist**
+**With the first migration (S1b)** (amended 2026-10-20)
 
-- Stop unless `/opt/ebay-sniper/.env` is `root:root 600` (ADR 0011) and the filesystem holding `/var/lib/docker` has at least 10 GB free.
-- Label the image with revision, cumulative `*_contract.sql` list and pg-boss version; refuse a target that lacks a contract migration the running image lists or has a lower pg-boss version.
-- `docker compose run --rm migrate` before `up`; on failure write `failed` and stop with the old containers running.
-- Record failed SHAs and refuse them; `ebay-deploy clear-failed` retries one.
-- Keep only the running and previous images, prune other images and build cache.
-- Ping healthchecks.io `deploy` on success or `deploy/fail` on failure ([ADR 0030](0030-heartbeats-and-external-probe.md)).
-- `/healthz` checks the database (above).
-- The smoke script adds the ADR 0021 client-address check: one send-code request for a reserved unknown address, then `auth_client_ip` from the server log over SSH must be `public`.
+- Before any docker call, stop unless `/opt/ebay-sniper/.env` is `root:root 600` (ADR 0011) and sets `POSTGRES_PASSWORD` to a lowercase hex value. Every compose call passes `--env-file /opt/ebay-sniper/.env`, which supplies `POSTGRES_PASSWORD`; compose refuses every command without it, and the migrate `DATABASE_URL` embeds it without URL encoding.
+- Step 4 is split. First `docker compose build server`; on failure stop, the running release is unchanged.
+- Then `docker compose up -d --wait --wait-timeout 120 postgres` as its own logged step, so a change to the Postgres config shows in the deploy log. On failure stop; the server still runs the old release. There is no automatic Postgres rollback in S1b because the server does not use Postgres yet; S3 adds it when the server depends on Postgres.
+- Then `timeout 900 docker compose run --rm --no-deps -T migrate` before `up`. `--no-deps` keeps `run` from recreating Postgres as a side effect. On a timeout, stop the leftover one-off migrate container, then stop the deploy; on any other failure stop with the exit code. Either way the old containers keep running and nothing is rolled back, because nothing was replaced. On migrate failure S1b only stops; writing `failed` starts with the failed-SHA list in S4.
+- Then `up -d --build --wait --wait-timeout 120 server` and the `/healthz` check as before. The up names only the server, so a Postgres health flap during this step does not fail it or roll back a healthy server; the rollback starts only the old server too. A rollback or the failed-first-deploy `down` never runs the Postgres step or migrate, and `down` never passes `-v`.
+- A deploy needs a healthy Postgres, accepted on purpose. Migrations must run before the server that needs them, so the Postgres and migrate steps are not skipped when Postgres is down. While Postgres is down no release can deploy, including a fix to the deletion endpoint; the old server keeps answering the endpoint because it does not depend on Postgres (A4). Recovery is to fix Postgres first, then deploy.
+
+**Later**
+
+- Stop unless the filesystem holding `/var/lib/docker` has at least 10 GB free (S4).
+- Label the image with revision, cumulative `*_contract.sql` list and pg-boss version; refuse a target that lacks a contract migration the running image lists or has a lower pg-boss version (S4).
+- Record failed SHAs and refuse them; `ebay-deploy clear-failed` retries one (S4).
+- Keep only the running and previous images, prune other images and build cache (S4).
+- Ping healthchecks.io `deploy` on success or `deploy/fail` on failure ([ADR 0030](0030-heartbeats-and-external-probe.md)) (S3).
+- `/healthz` checks the database (above) (S3).
+- The smoke script adds the ADR 0021 client-address check: one send-code request for a reserved unknown address, then `auth_client_ip` from the server log over SSH must be `public` (Phase 1).
 
 ## Alternatives considered
 
@@ -77,7 +85,7 @@ A failure before step 4 leaves the running containers alone. Manual rollback is 
 - The host clones the public repository over HTTPS; a private repository would need a read-only deploy key again (ADR 0011).
 
 **Risks**
-- Build fails under load or full disk. Mitigation: the build runs before the old containers are replaced, a failed start rolls back, old release directories are pruned; the free-disk floor and image pruning come with migrations.
+- Build fails under load or full disk. Mitigation: the build runs before the old containers are replaced, a failed start rolls back, old release directories are pruned; the free-disk floor and image pruning come in S4.
 - Rollback fails too. Mitigation: deletion endpoint runbook; eBay allows 24 hours (ADR 0013).
 - Migrate partly applies before failing. Mitigation: expand-only migrations, fix forward (ADR 0005).
 
@@ -85,7 +93,7 @@ A failure before step 4 leaves the running containers alone. Manual rollback is 
 
 - CI fails if any workflow uses a secret other than `GITHUB_TOKEN` (A10).
 - Server test: `/healthz` returns exactly `{"sha":"<sha>"}` with `no-store`; the server refuses a missing or malformed `GIT_SHA`. The database case (200 with, 503 without) comes with the database.
-- `tools/deploy-selftest` runs the real `ebay-deploy` with fake `git`, `docker` and `curl` (A11): an invalid SHA is refused; a SHA not on `main` is refused before docker runs; the running SHA is a no-op; success writes `running` and `previous` and prunes old releases; a wrong `/healthz` SHA rolls back to the old release and exits 1; a failed first deploy runs `down` and exits 1. The migrate, failed-SHA, disk and `.env` cases come with the full version.
+- `tools/deploy-selftest` runs the real `ebay-deploy` with fake `git`, `docker`, `curl`, `stat` and `timeout` (A11): an invalid SHA is refused; a SHA not on `main` is refused before docker runs; the running SHA is a no-op; success writes `running` and `previous` and prunes old releases; a wrong `/healthz` SHA rolls back to the old release and exits 1; a failed first deploy runs `down` and exits 1. The `.env`, Postgres-step, migrate-failure, migrate-timeout and call-order cases come with S1b; the failed-SHA, failed-digest, label and disk cases with S4.
 
 ## Revisit when
 

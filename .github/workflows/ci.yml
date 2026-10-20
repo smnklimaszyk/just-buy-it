@@ -15,7 +15,19 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-latest
-    # S1b adds a Postgres 18 service here once database code exists.
+    services:
+      postgres:
+        image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        env:
+          # A fixed test value for a throwaway service container, not a secret.
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      # packages/db tests create one database per test file on this server.
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,17 +60,40 @@ jobs:
       - name: Import rules
         run: pnpm depcruise
 
+      # ADR 0005: the committed migrations match the Drizzle schema.
+      - name: Migrations are generated
+        run: |
+          pnpm --filter @ebay-sniper/db exec drizzle-kit generate
+          test -z "$(git status --porcelain packages/db/migrations)" || {
+            git status --porcelain packages/db/migrations
+            echo "drizzle-kit generate changed packages/db/migrations; run pnpm --filter @ebay-sniper/db db:generate and commit the result" >&2
+            exit 1
+          }
+
       # --affected does not map infra/host/ to a package, so the deploy script tests always run.
       - name: Shell scripts
         run: |
-          shellcheck infra/host/ebay-deploy infra/host/smoke
+          shellcheck infra/host/ebay-deploy infra/host/smoke packages/ebay/scripts/fetch-openapi.sh
           pnpm turbo run test --filter=@ebay-sniper/deploy-selftest
 
       - name: Image build
         if: github.event_name == 'push'
-        run: docker build --build-arg GIT_SHA="$GIT_SHA" -f infra/Dockerfile .
+        run: docker build --build-arg GIT_SHA="$GIT_SHA" -t ebay-sniper-server:ci -f infra/Dockerfile .
         env:
           GIT_SHA: ${{ github.sha }}
+
+      # Runs the image's migrate command twice against the service database: the first run applies
+      # every migration, the second applies none. Catches an image without packages/db/migrations.
+      - name: Image migrate
+        if: github.event_name == 'push'
+        run: |
+          for run in first second; do
+            echo "migrate, $run run"
+            docker run --rm --network host -e DATABASE_URL="$TEST_DATABASE_URL" -w /app/apps/ops \
+              ebay-sniper-server:ci node dist/main.js migrate
+          done
+          docker run --rm --entrypoint sh ebay-sniper-server:ci -c \
+            'test ! -e /app/packages/db/dist/testing && test ! -e /app/packages/ebay/dist/testing'
 
   zizmor:
     runs-on: ubuntu-latest

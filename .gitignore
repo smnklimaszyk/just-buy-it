@@ -7,3 +7,4 @@ coverage/
 .claude/tdd-guard/data/
 *.log
 .turbo/
+packages/ebay/.openapi/

@@ -40,6 +40,12 @@ Rules:
 - Backup scripts: shell in `infra/backup/`, fail on unset variables. `fixtures/` is imported only by tests and the fixture adapter.
 - Zod only at boundaries; sector parsers are hand-written; configs use `satisfies`.
 
+**S1b amendment (2026-10-20)**:
+
+- `exports` allows only `.`, so ADR 0007's rule that the server imports only four `packages/ebay` modules cannot be checked by dependency-cruiser through the package entry. S1b keeps the single entry. One of the two rules is picked before S3.
+- In apps, `process.env` is read only in `apps/*/src/env.ts`; ESLint (`no-restricted-syntax`) enforces it in `apps/*/src/**`, tests excepted. Packages may not use the `process` global at all.
+- The `fromDrizzle` wording is settled in S4, when pg-boss arrives.
+
 | Port | Adapters | Why |
 |---|---|---|
 | `ListingSource` | Browse production, synthetic fixtures. No sandbox adapter | Dev and CI need no production keyset |

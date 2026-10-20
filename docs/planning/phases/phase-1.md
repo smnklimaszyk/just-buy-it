@@ -12,7 +12,7 @@ Every email: "not reviewed by Claude", profile line, reason codes, seller number
 
 ## 2. Entry criteria
 
-**From [phase-0.md](phase-0.md)** (gaps add 2 to 3 days): monorepo and migrate step (pg-boss `migrate: false`); CI with Postgres 18, SHA-tagged deploys with rollback on `intra-ai` (`/opt/ebay-sniper`, Traefik, 127.0.0.1:3140); deletion endpoint, `/privacy`, probe; keyset active, gate 1a passed ([guide](../guides/ebay-access.md)); query builder, fixtures (Browse OpenAPI v1.20.4), first contract run; supply counts (D-20); SES `alerts.intra-ai.de` verified, production access requested; [secrets](../environments-and-secrets.md); owner checklist: input tax (`inputTaxDeductible` false until confirmed), legal form, business eBay.de account.
+**From [phase-0.md](phase-0.md)** (gaps add 2 to 3 days): monorepo and migrate step (pg-boss `migrate: false` from phase 0 S4); CI with Postgres 18, SHA-tagged deploys with rollback on `intra-ai` (`/opt/ebay-sniper`, Traefik, 127.0.0.1:3140); deletion endpoint, `/privacy`, probe; keyset active, gate 1a passed ([guide](../guides/ebay-access.md)); query builder, fixtures (Browse OpenAPI v1.20.4), first contract run; supply counts (D-20); SES `alerts.intra-ai.de` verified, production access requested; [secrets](../environments-and-secrets.md); owner checklist: input tax (`inputTaxDeductible` false until confirmed), legal form, business eBay.de account.
 
 **Decisions still needed:** D-27 before S1; D-11, D-16, D-50 before S2; D-20, D-26 before S4; D-24 before S6; D-08 before S8; D-56 before S10.
 

@@ -25,7 +25,7 @@ The app runs as its own Compose project `ebay-sniper` in `/opt/ebay-sniper` (ser
 | Client address | Traefik sees the real peer and writes `X-Forwarded-For`; the server trusts only that single entry |
 | Env file | `/opt/ebay-sniper/.env`, `root:root 600` (ADR 0011) |
 | Compose | `pgdata` with fixed `name:`; `json-file` `max-size: 20m`, `max-file: 5`; `restart: unless-stopped`; `init: true` for Node; healthcheck per long-running service |
-| `mem_limit` (start) | postgres 2g, worker 1536m, server 768m, migrate 512m |
+| `mem_limit` (start) | postgres 512m (amended 2026-10-20 from 2g), worker 1536m, server 768m, migrate 256m (amended from 512m). Postgres runs with `max_connections` 30 and the default `shared_buffers`, on the owner's instruction to keep Postgres small (S1b, Q6); look again when Phase 1 polling runs |
 | `stop_grace_period` | worker 180s (pg-boss graceful stop 170 s), server 30s, postgres 60s |
 | `/healthz` | Public, only `{"sha": "<commit>"}`, `no-store`, 200. The `select 1` check (200 within 2 s, else 503) comes with the database |
 | Backups | Server's `/opt/backups` practice plus our own dump without listing content (ADR 0025) |

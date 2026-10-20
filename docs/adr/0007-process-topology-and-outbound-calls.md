@@ -35,6 +35,8 @@ The server never calls Anthropic, starts pg-boss with `migrate`, `schedule` and 
 
 **Amendments elsewhere**: ADR 0013: the server imports only the token, getPublicKey, search and getItem modules; the credential is not narrowed. ADR 0016: the second class is `standard`; the per-user preview cap counts per quota window.
 
+**S1b amendment (2026-10-20)**: in Phase 0, `app.reserve_ebay_call(p_resource, p_class, p_purpose, p_min_left, p_now)` takes five arguments and returns `ok` or `pool`. `p_now` comes from the injected clock (ADR 0008) and must be within 300 s of the database clock, or the call raises SQLSTATE `EB001`. The resource key is `buy.browse` (`apiContext.apiName` from getRateLimits). Quota windows for one resource never overlap (an exclusion constraint); S5 and Phase 1 move a window's bounds with `UPDATE`, never with an overlapping insert. Phase 1 adds the per-user arguments (`user_id`, `user_cap`, result `user_cap`) as a new function signature in an expand migration and drops the five-argument one in a later contract migration.
+
 ## Alternatives considered
 
 - **One process**: a blocked event loop or worker crash takes deletion and login down.

@@ -18,7 +18,7 @@ Three classes in separate Postgres schemas, each with one deletion rule (purge j
 |---|---|---|---|
 | 1 eBay content, raw IDs | `ebay_live` | `listing`, `listing_content`, `evaluation_quote`, `classifier_sample` | Content and quotes deleted at `content_expires_at` = min(fetch + 6 h, item end); `listing` and its rows once `gone_at` is set. No foreign key into `ebay_live` |
 | 2 numbers and codes under `item_key` | `app` | `seen_item` 90 d (no prices); 180 d: `evaluation`, `decision`, `alert`, `alert_delivery`, `digest`, `review_label`; `fair_value` 1 y (current value plus 30 d of price history); `market_check` | Price-bearing columns (price, shipping, landed cost, quantiles, interval bounds, z-scores, seller feedback count and percentage) set to NULL 30 d after write; codes, verdicts, versions, costs keep the row lifetime. Lifetimes are assumptions (D-11) |
-| 3 operational | `app`, `auth`, `pgboss` | config rows (watch incl. `buyer_profile`), `audit_event` 1 y, `poll_run` 30 d, `refresh_run`, `api_usage_hourly` 1 y, `quota_snapshot` 90 d, `deletion_event` 1 y, `deletion_result_hourly` 90 d (ADR 0013), `auth` (users, sessions, hashed codes) | Per registry row; no listing content |
+| 3 operational | `app`, `auth`, `pgboss` | config rows (watch incl. `buyer_profile`), `audit_event` 1 y, `poll_run` 30 d, `refresh_run`, `api_usage_hourly` 1 y, `quota_snapshot` 90 d, `ebay_quota_window` 90 d (purge key `window_end`, added 2026-10-20 in S1b), `deletion_event` 1 y, `deletion_result_hourly` 90 d (ADR 0013), `auth` (users, sessions, hashed codes) | Per registry row; no listing content |
 
 A new table adds its registry row, with the lifetime from its phase plan, in the same pull request; the Phase 4 auction tables are class 2 with prices nulled at 30 d.
 

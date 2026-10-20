@@ -58,7 +58,7 @@ Production: `/opt/ebay-sniper/.env`, `root:root 600`, every value also in the PM
 | eBay Dev ID, sandbox keyset | nobody / manual tests | PM | With the keyset | On leak |
 | Deletion verification token | server | `.env`, PM | 64 chars | `.env`, restart, then portal |
 | `DELETION_PROBE_CODE` | server, UptimeRobot | `.env`, monitor URL | 40 chars | On leak, with the monitor URL |
-| `POSTGRES_PASSWORD`, `app`, `migrator` | db bootstrap; apps; migrate | `.env`, PM | `openssl rand -hex 32` | On leak (`ALTER ROLE`, `.env`, restart) |
+| `POSTGRES_PASSWORD`, `app`, `migrator` | db bootstrap; apps; migrate | `.env`, PM | `openssl rand -hex 32` (hex, because Compose embeds it in a URL). Phase 0 S1b has only `POSTGRES_PASSWORD`, see section 4 | On leak (`ALTER ROLE`, `.env`, restart) |
 | `backup_dump` password | backup job | `.env` (backup service), PM | SELECT on `app`, `auth`, `drizzle`, allowed `pgboss` tables; none on `ebay_live` | On leak |
 | healthchecks.io ping URLs | worker, server, backup, deploy | `.env`; `deploy` URL in a root-only file | [ADR 0030](../adr/0030-heartbeats-and-external-probe.md) | On leak |
 | SES key prod / dev | apps / local | `.env`, PM | `ses-sender-prod`; `ses-sender-dev` (simulator only) | On leak; prod yearly |
@@ -96,7 +96,7 @@ Token rule: `^[A-Za-z0-9_-]{32,80}$`. Rotation: vendor console, `.env`, PM, `doc
 |---|---|---|---|
 | `NODE_ENV`, `LOG_LEVEL`, `RUN_MODE` | all | 0 | pino level default `info`; `normal` or `restore-drill` |
 | `PORT`, `PUBLIC_BASE_URL` | server | 0 | Host publishes `127.0.0.1:3140`; `https://deals.intra-ai.de` |
-| `DATABASE_URL`, `MIGRATE_DATABASE_URL`, `POSTGRES_PASSWORD` | apps; migrate; db | 0 | `app` role; `migrator` role; bootstrap only |
+| `DATABASE_URL`, `MIGRATE_DATABASE_URL`, `POSTGRES_PASSWORD` | apps; migrate; db | 0 | `app` role; `migrator` role; bootstrap only. Phase 0 S1b: see below |
 | `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET` | server, worker, contract | 0 | No token at startup, so a disabled keyset is harmless |
 | `EBAY_MARKETPLACE_ID`, `EBAY_ENDUSERCTX_POSTAL_CODE` | worker, contract | 0 | `EBAY_DE`; encoded into `X-EBAY-C-ENDUSERCTX` |
 | `EBAY_DELETION_ENDPOINT_URL` | server | 0 | Byte for byte the portal URL; absent, the route is skipped |
@@ -109,6 +109,8 @@ Token rule: `^[A-Za-z0-9_-]{32,80}$`. Rotation: vendor console, `.env`, PM, `doc
 | `BACKUP_*` | backup job | 1-2 | Names fixed by the backup script |
 | `ANTHROPIC_API_KEY`, `_WORKSPACE_ID`, `_MONTHLY_LIMIT_USD` | worker, eval | 3 | Worker checks the `anthropic-workspace-id` header; limit 360 |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | eval | 3 | `https://cloud.langfuse.com` |
+
+**Phase 0 S1b (amended 2026-10-20)**: one database role, `ebay_sniper`, the image's superuser and owner of the `ebay_sniper` database, with `POSTGRES_PASSWORD` from `.env`. `DATABASE_URL` is not in `.env`: Compose builds it for the `migrate` service from `POSTGRES_PASSWORD`, and only the migrator connects in S1b. The server still loads the whole `.env` through `env_file`, so `POSTGRES_PASSWORD` sits in its environment although it does not connect; accepted for S1b, it goes away with the role split in S3. `POSTGRES_PASSWORD` takes effect only when the data volume is first created; a rotation is `ALTER ROLE ebay_sniper PASSWORD '...'` through `docker compose exec postgres psql`, then the `.env` edit and a deploy. `MIGRATE_DATABASE_URL` and the `app` role come with the role split, decided in S3 before the server connects.
 
 ## 5. Checks
 

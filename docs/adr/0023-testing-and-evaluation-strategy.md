@@ -31,6 +31,12 @@ Domain code is test-first with Vitest 5, golden fixtures and fast-check 4 proper
 7. **No network outside the contract run**; CI has no eBay or Anthropic secrets.
 8. **Contract run asserts and discards**: `getRateLimits` first, under the 100-call cap (0011), each 0016 query shape checked for empty `warnings` and Zod validity, the Claude output schema sent once with a synthetic case, calls and cost printed, no response body stored.
 
+**S1b amendment (2026-10-20)**:
+
+- The Browse OpenAPI file is not committed (phase 0 S1b row, owner decision Q5). Its URL, version (v1.20.4) and SHA-256 are committed in `packages/ebay/openapi/browse.lock.json`. The conformance check is a manual script, `pnpm --filter @ebay-sniper/ebay openapi:check`, which downloads the file, checks the hash and compares our Zod schemas with it, because CI has no network outside the contract run (rule 7). It runs when the schemas change and before each contract run.
+- MSW is deferred: S1b tests inject `fetchFn`, so no request can reach the network. MSW arrives with the first code that calls the global `fetch` in tests (S3 server tests).
+- Test helpers in `src/testing/` take the admin database URL as an argument instead of importing `vitest`, and are excluded from the build, so they never reach `dist` or the image.
+
 ## Alternatives considered
 
 - **Recorded production fixtures (plan)**: eBay content and seller names in every clone, against 0014.

@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1792489705148,
+      "tag": "0000_foundations",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792490417186,
+      "tag": "0001_reserve_ebay_call",
+      "breakpoints": true
+    }
+  ]
+}

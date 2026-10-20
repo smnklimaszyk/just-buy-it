@@ -17,9 +17,9 @@ Every dependency is an exact version (or `workspace:*`), with a committed lockfi
 One migrate step, run once per deploy as a one-off container, owns all schemas. Runner `packages/db/src/migrate.ts` holds a session `pg_advisory_lock` on a fixed key and exits non-zero on failure so the deploy stops (ADR 0012):
 
 1. Drizzle migrations for `app`, `auth`, `ebay_live`. Better Auth schema: `pnpm exec auth generate --adapter drizzle --dialect postgresql --output packages/db/schema/auth.ts -y`, committed, made into SQL by `drizzle-kit generate`.
-2. `pg-boss migrate` for `pgboss`.
+2. `pg-boss migrate` for `pgboss` (from S4, see the S1b amendment).
 
-Server and worker construct pg-boss only through the queue wrapper with `migrate: false`.
+Server and worker construct pg-boss only through the queue wrapper with `migrate: false` (from S4).
 
 Rules:
 
@@ -38,6 +38,14 @@ Rules:
 | better-auth / auth CLI | 1.7.x, same version | 1.8 (can change the generated schema) |
 
 Versions from https://registry.npmjs.org/, 2026-10-19.
+
+**S1b amendment (2026-10-20)**:
+
+- The migrations folder is `packages/db/migrations/` (Drizzle 0.31 layout: `NNNN_name.sql` plus `meta/_journal.json`).
+- The runner itself runs `ALTER DATABASE ... SET timezone TO 'UTC'` (ADR 0008).
+- The runner sets `lock_timeout` 10 s and `statement_timeout` 5 min on its session, and connects with a 10 s timeout, so a migration waiting on a lock or a runaway statement fails instead of holding the deploy.
+- The runner checks the journal and the applied hashes itself before calling Drizzle, because Drizzle 0.45.4 compares only the journal `when` values: it never notices an applied file that was edited, and it skips a new entry whose `when` is older than the last applied one. Both stop the migration. Applied rows newer than the release's folder (an older release deployed over a newer schema) are allowed and logged.
+- pg-boss is not part of S1b. The pg-boss migrate step comes in S4 with the first job and must use the pinned package's CLI or its `migrateCommands` run by our runner, never an in-process `start()` followed by `stop()`, which skips the async index builds.
 
 ## Alternatives considered
 
@@ -62,7 +70,7 @@ Versions from https://registry.npmjs.org/, 2026-10-19.
 
 **Risks**
 - Better Auth may not generate into a non-default schema (unverified): check in phase 0; else a post-generate script wraps it in `pgSchema('auth')`.
-- An old image may refuse a newer pg-boss schema on rollback: ship pg-boss upgrades alone with `pg-boss plans migrate` output; `pg-boss rollback` in the runbook.
+- An old image may refuse a newer pg-boss schema on rollback (from S4): ship pg-boss upgrades alone with `pg-boss plans migrate` output; `pg-boss rollback` in the runbook.
 - A contract migration breaks rollback: CI check below from the first migration, release rule in ADR 0012.
 - Renovate bumps a held version: `allowedVersions` in `packageRules`.
 - pg-boss renames job tables, so ADR 0014's exclusion misses: the restore test catches rows.
@@ -72,7 +80,7 @@ Versions from https://registry.npmjs.org/, 2026-10-19.
 - CI script enforces the pin rules above. Fails today: root `engines.node` is `>=24`.
 - CI: regenerating the Better Auth schema gives no diff; `drizzle-kit generate` on a clean tree writes nothing.
 - CI, from the first migration: reject DROP or RENAME outside contract migrations, and row writes in `ebay_live` migrations.
-- Integration test (Postgres 18): two parallel runners on an empty database both exit 0, nothing pending; server and worker start with `migrate: false`; `start()` throws if pg-boss migrations are pending.
+- Integration test (Postgres 18): two parallel runners on an empty database both exit 0, nothing pending; from S4, server and worker start with `migrate: false` and `start()` throws if pg-boss migrations are pending.
 - Restore test (also the monthly drill): restore the ADR 0014 dump, migrate; four schemas and `drizzle` log exist, tables match a fresh migrate, `ebay_live` and job tables empty.
 - Lint: no `new PgBoss(` outside the queue wrapper. Reviews of `renovate.json` edits ask "ADR 0005 updated?".
 

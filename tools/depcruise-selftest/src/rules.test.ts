@@ -20,6 +20,10 @@ describe("dependency-cruiser rules", () => {
     expect(await violatedRules("app-imports-app")).toEqual(["no-app-to-app"]);
   });
 
+  it("reports an adapter package importing another adapter package", async () => {
+    expect(await violatedRules("adapter-imports-adapter")).toEqual(["adapters-import-only-domain"]);
+  });
+
   it("reports nothing for an app importing an allowed package", async () => {
     expect(await violatedRules("clean")).toEqual([]);
   });
