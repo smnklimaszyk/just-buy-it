@@ -29,8 +29,9 @@ Search, pricing, screening and alerts come next. The plan, decisions, ADRs and p
 
 ```sh
 npx pnpm@12.12.1 install
-cd apps/server && npx vitest run && npx tsc --noEmit
-npx eslint .
+pnpm turbo run lint typecheck test --affected
+pnpm turbo run lint typecheck test --filter=@ebay-sniper/server
+pnpm depcruise
 ```
 
 ## Configuration

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "rangeStrategy": "pin",
+  "minimumReleaseAge": "7 days",
+  "packageRules": [
+    {
+      "description": "New majors of these wait for an ADR 0005 update; approve them from the dependency dashboard.",
+      "matchPackageNames": ["typescript", "pnpm", "turbo", "hono", "zod", "drizzle-orm", "drizzle-kit"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    }
+  ]
+}

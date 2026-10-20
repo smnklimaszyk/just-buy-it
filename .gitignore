@@ -6,3 +6,4 @@ coverage/
 !.env.example
 .claude/tdd-guard/data/
 *.log
+.turbo/

@@ -1,6 +1,7 @@
 packages:
   - apps/*
   - packages/*
+  - tools/*
 
 # Native parsers pulled in by tdd-guard-vitest; their install scripts are not needed.
 allowBuilds:

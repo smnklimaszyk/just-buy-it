@@ -1,11 +1,11 @@
 import { serve } from "@hono/node-server";
-import pino from "pino";
+import { createLogger, loggerOptions } from "@ebay-sniper/logging";
 import { createApp, type IncomingNotification } from "./app.js";
 import { createPublicKeyClient } from "./ebay-keys.js";
 import { parseEnv } from "./env.js";
 import { limitConcurrency, processNotification } from "./notifications.js";
 
-const logger = pino();
+const logger = createLogger(loggerOptions("info"));
 const env = parseEnv(process.env);
 
 const { ebayClientId, ebayClientSecret } = env;

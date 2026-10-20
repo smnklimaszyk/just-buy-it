@@ -4,14 +4,15 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint .",
     "start": "node dist/main.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ebay-sniper/logging": "workspace:*",
     "@hono/node-server": "2.1.4",
     "hono": "4.13.13",
-    "pino": "10.4.0",
     "zod": "4.6.6"
   },
   "devDependencies": {
