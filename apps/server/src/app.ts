@@ -46,7 +46,7 @@ export function createApp(options: AppOptions) {
   });
 
   // ADR 0013: other methods get 405, never 400. HEAD is answered by the GET handler.
-  app.all("/ebay/account-deletion", (c) => c.body(null, 405, { Allow: "GET, POST" }));
+  app.all("/ebay/account-deletion", (c) => c.text("Method Not Allowed", 405, { Allow: "GET, POST" }));
 
   return app;
 }

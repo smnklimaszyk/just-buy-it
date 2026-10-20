@@ -131,6 +131,9 @@ describe("other methods on /ebay/account-deletion", () => {
 
     expect(res.status).toBe(405);
     expect(res.headers.get("allow")).toBe("GET, POST");
+    // A body gives the reply a Content-Length; Traefik's buffering middleware answers 500 to an
+    // empty chunked reply.
+    expect(await res.text()).toBe("Method Not Allowed");
     expect(received).toEqual([]);
   });
 });
