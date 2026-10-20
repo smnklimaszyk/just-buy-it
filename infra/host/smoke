@@ -41,8 +41,23 @@ challenge=no
 if [[ "$meta" == "200 application/json"* && "$reply" == *'"challengeResponse":"'* ]]; then challenge=yes; fi
 check "challenge is 200 JSON with challengeResponse" "got '$meta'" [ "$challenge" = yes ]
 
+# ADR 0030: challenge replies must not be cached by a proxy.
+cache="$(curl -sS --max-time 10 -o /dev/null -D - "$base/ebay/account-deletion?challenge_code=smoke" 2>/dev/null |
+  tr -d '\r' | grep -i '^cache-control:' || true)"
+no_store=no
+if grep -Eqix 'cache-control: *no-store' <<<"$cache"; then no_store=yes; fi
+check "challenge reply has cache-control: no-store" "got '${cache:-no cache-control header}'" [ "$no_store" = yes ]
+
 code="$(status_of "$base/ebay/account-deletion")"
 check "challenge without code is 400" "got $code" [ "$code" = 400 ]
+
+# ADR 0013: other methods get 405, never 400.
+code="$(status_of -X PUT "$base/ebay/account-deletion")"
+check "PUT /ebay/account-deletion is 405" "got $code" [ "$code" = 405 ]
+
+# The endpoint answers 204 before it parses anything; the server counts this one as malformed.
+code="$(status_of -X POST -H 'content-type: application/json' --data-binary '{}' "$base/ebay/account-deletion")"
+check "POST {} without a signature header is 204" "got $code" [ "$code" = 204 ]
 
 path="/smoke-$RANDOM$RANDOM"
 code="$(status_of "$base$path")"

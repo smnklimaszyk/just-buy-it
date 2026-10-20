@@ -27,7 +27,7 @@ We log with pino as JSON to stdout; logs never hold listing content, seller fiel
 
 Phases: 0 logger and log rules; 1 first five tables, Ops page, `ops-alerts`; 3 `llm_spend_hourly`, refusal and label-backlog rules.
 
-Starting rules (informative; changed in `rules.ts` under the owning ADR): eBay quota above 90% of the window, page cap reached in the last hour, feed breaker open 15 min (0016); Claude day budget used up, more than 3 refusals per feed per Berlin day (0019); claim or delivery anomalies non-zero for an hour, any dead-letter job (0015); any `inference_geo` mismatch (0018); deletion results only `key_unavailable` for 6 h (0013); shadow or blocked items unlabelled after 4 h, so a reviewer sees content before the 6-hour purge (0019, D-34). Restore-drill age has no ops rule; the ADR 0011 healthchecks check watches it.
+Starting rules (informative; changed in `rules.ts` under the owning ADR): eBay quota above 90% of the window, page cap reached in the last hour, feed breaker open 15 min (0016); Claude day budget used up, more than 3 refusals per feed per Berlin day (0019); claim or delivery anomalies non-zero for an hour, any dead-letter job (0015); any `inference_geo` mismatch (0018); deletion results only `key_unavailable` for 6 h, and more than 1,000 non-verified deletion results in an hour, both read from `deletion_result_hourly` (0013; in Phase 0 the server writes only a warn line); shadow or blocked items unlabelled after 4 h, so a reviewer sees content before the 6-hour purge (0019, D-34). Restore-drill age has no ops rule; the ADR 0011 healthchecks check watches it.
 
 ## Alternatives considered
 

@@ -20,8 +20,8 @@ One image runs as two Node processes on PostgreSQL 18, no Redis: `server` (Hono 
 | Process | Call | Timeout | Counter | On failure |
 |---|---|---|---|---|
 | server | SES login code (`hashed`, ADR 0021), not awaited | 5 s | none | log without code |
-| server | eBay token, cache empty | 5 s | recorded | flow fails, no unit spent |
-| server | getPublicKey, after the 204 (ADR 0013) | 5 s | recorded | log `key_unavailable` |
+| server | eBay token, cache empty | 5 s | recorded (`identity.oauth2` / `token`) | flow fails, no unit spent |
+| server | getPublicKey, after the 204 (ADR 0013) | 5 s | recorded (`commerce.notification` / `deletion-key`) | count and log `key_unavailable` |
 | server | watch preview, one page | 10 s total | 1 `standard`, user ID | 504, unit spent |
 | server | Refresh, one getItem | 5 s total | 1 `standard`, user ID | "details hidden" |
 | worker | all else (polls, Anthropic, SES alerts) | ADR 0015 | ADR 0016 class | retry, dead letter |
@@ -33,9 +33,11 @@ The server never calls Anthropic, starts pg-boss with `migrate`, `schedule` and 
 
 **Tokens**: in memory per process, refreshed 5 minutes before expiry by one in-flight promise, never stored or logged; about 24 requests a day, so only a limit below about 50 matters.
 
-**Amendments elsewhere**: ADR 0013: the server imports only the token, getPublicKey, search and getItem modules; the credential is not narrowed. ADR 0016: the second class is `standard`; the per-user preview cap counts per quota window.
+**Amendments elsewhere**: ADR 0013: the credential is not narrowed (the rule that the server imports only the token, getPublicKey, search and getItem modules was dropped in S3, see ADR 0006). ADR 0016: the second class is `standard`; the per-user preview cap counts per quota window.
 
 **S1b amendment (2026-10-20)**: in Phase 0, `app.reserve_ebay_call(p_resource, p_class, p_purpose, p_min_left, p_now)` takes five arguments and returns `ok` or `pool`. `p_now` comes from the injected clock (ADR 0008) and must be within 300 s of the database clock, or the call raises SQLSTATE `EB001`. The resource key is `buy.browse` (`apiContext.apiName` from getRateLimits). Quota windows for one resource never overlap (an exclusion constraint); S5 and Phase 1 move a window's bounds with `UPDATE`, never with an overlapping insert. Phase 1 adds the per-user arguments (`user_id`, `user_cap`, result `user_cap`) as a new function signature in an expand migration and drops the five-argument one in a later contract migration.
+
+**S3 amendment (2026-10-20)**: the server passes a 5 s timeout to both the token cache and the getPublicKey client. Both are counted in `app.api_usage_hourly` (`resource` / `purpose`): every token POST as `identity.oauth2` / `token`, every getPublicKey HTTP attempt, retries included, as `commerce.notification` / `deletion-key`. The server adds them up in memory per hour and flushes every 10 s; they are never reserved. The four-module import rule is dropped (ADR 0006 S3 amendment), and server tests use a `globalThis.fetch` that throws instead of MSW, because every fetch in the server is injected.
 
 ## Alternatives considered
 
@@ -59,13 +61,13 @@ The server never calls Anthropic, starts pg-boss with `migrate`, `schedule` and 
 
 ## How we check it
 
-- dependency-cruiser: `apps/server` imports only those four `packages/ebay` modules, never `packages/llm`; only `apps/worker` imports `work`/`schedule`.
+- dependency-cruiser: `apps/server` never imports `packages/llm`; only `apps/worker` imports `work`/`schedule`. Which `packages/ebay` functions the server can use is checked by review of `packages/ebay/src/index.ts` (single package entry, ADR 0006).
 - Startup test on the real entry: no `work`/`schedule` calls, three flags `false`.
-- MSW `onUnhandledRequest: 'error'` in server tests.
+- Server tests: `vitest.setup.ts` replaces `globalThis.fetch` with a function that throws, so any request not made through an injected `fetchFn` fails the test.
 - Class check: preview and Refresh raise `used_standard` and the user's row, not `used_alert_path`.
 - Concurrency, two processes: limit 300, `min_left` 100 gives exactly 200 `standard` `ok`, then 150 `alert-path` give 100 `ok`, `used` 300; user cap 40 of 60 gives 40; refusals leave no user increment.
 - Reconciliation: `used` 100, reading 150 gives drift 50, `ebay_offset` 50, `used` 100; next `standard` reservation sees `remaining` 50 lower.
-- Timeouts: slow search gives 504, unit spent; token timeout leaves `used` unchanged; slow SES does not delay login.
+- Timeouts: slow search gives 504, unit spent; token timeout leaves `used` unchanged; slow SES does not delay login. A token request that never answers ends the key lookup as `key_unavailable` after about 5 s; one token and one key request count 1 each under their purposes.
 - Postgres stopped: a signed notification still gets 204.
 - Fresh-context review (D-37): a new server call needs an amendment here.
 

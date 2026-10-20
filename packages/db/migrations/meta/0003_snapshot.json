@@ -1,0 +1,347 @@
+{
+  "id": "d7f607a1-0a66-4113-8c80-016fafd6086e",
+  "prevId": "21a6bee0-abab-4cf0-bf4b-b4a377378007",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "app.api_usage_hourly": {
+      "name": "api_usage_hourly",
+      "schema": "app",
+      "columns": {
+        "hour_utc": {
+          "name": "hour_utc",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resource": {
+          "name": "resource",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "purpose": {
+          "name": "purpose",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "calls": {
+          "name": "calls",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "api_usage_hourly_hour_utc_resource_purpose_pk": {
+          "name": "api_usage_hourly_hour_utc_resource_purpose_pk",
+          "columns": [
+            "hour_utc",
+            "resource",
+            "purpose"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "api_usage_hourly_purpose_format": {
+          "name": "api_usage_hourly_purpose_format",
+          "value": "\"app\".\"api_usage_hourly\".\"purpose\" ~ '^[a-z][a-z0-9_-]{0,39}$'"
+        },
+        "api_usage_hourly_calls_positive": {
+          "name": "api_usage_hourly_calls_positive",
+          "value": "\"app\".\"api_usage_hourly\".\"calls\" > 0"
+        },
+        "api_usage_hourly_whole_hour": {
+          "name": "api_usage_hourly_whole_hour",
+          "value": "extract(epoch FROM \"app\".\"api_usage_hourly\".\"hour_utc\")::bigint % 3600 = 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.deletion_event": {
+      "name": "deletion_event",
+      "schema": "app",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "notification_id": {
+          "name": "notification_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "topic": {
+          "name": "topic",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_date": {
+          "name": "event_date",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "publish_attempt_count": {
+          "name": "publish_attempt_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "deletion_event_notification_id_unique": {
+          "name": "deletion_event_notification_id_unique",
+          "columns": [
+            "notification_id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "deletion_event_notification_id_length": {
+          "name": "deletion_event_notification_id_length",
+          "value": "char_length(\"app\".\"deletion_event\".\"notification_id\") BETWEEN 1 AND 128"
+        },
+        "deletion_event_topic_length": {
+          "name": "deletion_event_topic_length",
+          "value": "char_length(\"app\".\"deletion_event\".\"topic\") BETWEEN 1 AND 64"
+        },
+        "deletion_event_publish_attempt_count": {
+          "name": "deletion_event_publish_attempt_count",
+          "value": "\"app\".\"deletion_event\".\"publish_attempt_count\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.deletion_result_hourly": {
+      "name": "deletion_result_hourly",
+      "schema": "app",
+      "columns": {
+        "hour_utc": {
+          "name": "hour_utc",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "result": {
+          "name": "result",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "notifications": {
+          "name": "notifications",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "deletion_result_hourly_hour_utc_result_pk": {
+          "name": "deletion_result_hourly_hour_utc_result_pk",
+          "columns": [
+            "hour_utc",
+            "result"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "deletion_result_hourly_result_format": {
+          "name": "deletion_result_hourly_result_format",
+          "value": "\"app\".\"deletion_result_hourly\".\"result\" ~ '^[a-z][a-z_]{0,39}$'"
+        },
+        "deletion_result_hourly_notifications_positive": {
+          "name": "deletion_result_hourly_notifications_positive",
+          "value": "\"app\".\"deletion_result_hourly\".\"notifications\" > 0"
+        },
+        "deletion_result_hourly_whole_hour": {
+          "name": "deletion_result_hourly_whole_hour",
+          "value": "extract(epoch FROM \"app\".\"deletion_result_hourly\".\"hour_utc\")::bigint % 3600 = 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.ebay_quota_window": {
+      "name": "ebay_quota_window",
+      "schema": "app",
+      "columns": {
+        "resource": {
+          "name": "resource",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "window_start": {
+          "name": "window_start",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "window_end": {
+          "name": "window_end",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "limit_total": {
+          "name": "limit_total",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 5000
+        },
+        "used": {
+          "name": "used",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "used_alert_path": {
+          "name": "used_alert_path",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "used_standard": {
+          "name": "used_standard",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "ebay_offset": {
+          "name": "ebay_offset",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "ebay_quota_window_resource_window_start_pk": {
+          "name": "ebay_quota_window_resource_window_start_pk",
+          "columns": [
+            "resource",
+            "window_start"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ebay_quota_window_resource_format": {
+          "name": "ebay_quota_window_resource_format",
+          "value": "\"app\".\"ebay_quota_window\".\"resource\" ~ '^[a-z]+\\.[a-z_.]+$'"
+        },
+        "ebay_quota_window_bounds": {
+          "name": "ebay_quota_window_bounds",
+          "value": "\"app\".\"ebay_quota_window\".\"window_end\" > \"app\".\"ebay_quota_window\".\"window_start\""
+        },
+        "ebay_quota_window_counts": {
+          "name": "ebay_quota_window_counts",
+          "value": "\"app\".\"ebay_quota_window\".\"limit_total\" > 0 AND \"app\".\"ebay_quota_window\".\"used\" >= 0 AND \"app\".\"ebay_quota_window\".\"ebay_offset\" >= 0"
+        },
+        "ebay_quota_window_used_sum": {
+          "name": "ebay_quota_window_used_sum",
+          "value": "\"app\".\"ebay_quota_window\".\"used\" = \"app\".\"ebay_quota_window\".\"used_alert_path\" + \"app\".\"ebay_quota_window\".\"used_standard\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "app.probe_seen": {
+      "name": "probe_seen",
+      "schema": "app",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "smallint",
+          "primaryKey": true,
+          "notNull": true,
+          "default": 1
+        },
+        "seen_at": {
+          "name": "seen_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "probe_seen_single_row": {
+          "name": "probe_seen_single_row",
+          "value": "\"app\".\"probe_seen\".\"id\" = 1"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "app": "app"
+  },
+  "views": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

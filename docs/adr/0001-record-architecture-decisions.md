@@ -10,7 +10,7 @@
 - The plan lists 16 decisions but no format, location or approver. Catalogue: 0001 to 0033.
 - Why an option was rejected (e.g. the 30-day sold-price ledger, BullMQ, Next.js, magic links) matters as much as the choice and gets asked again.
 - Claude Code agents write code and draft records; Simon directs, reviews and decides (D-01). Agent sessions start without history; records keep them consistent.
-- Repository: Simon's personal GitHub, Free plan, no branch protection. By convention: CI green and a fresh-context Claude Code review before merge, Simon's go before production deploys (D-37).
+- Repository: Simon's personal GitHub, Free plan. Ruleset on `main` (2026-10-20): changes go through a pull request, the `checks` and `zizmor` jobs must pass and the branch must be up to date; no force-push, no deletion, no bypass. No approving review is required. By convention: a fresh-context Claude Code review before merge, Simon's go before production deploys (D-37).
 - A proposed record waits only on Simon's review.
 - Reference formats: [MADR 4.0.0](https://adr.github.io/madr/), [Nygard](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions).
 
@@ -74,7 +74,7 @@ One row per record: number, title, status, owner (Simon for all), and the phase 
 
 ## Revisit when
 
-- Another Intra AI person starts writing or deciding records: decide on a second approver and branch protection (revisits D-37).
+- Another Intra AI person starts writing or deciding records: decide on a second approver (revisits D-37).
 - Records are skipped in practice (decisions only in PR threads): consider the shorter Nygard format.
 - Simon wants a rendered decision log: move header lines to MADR front matter and evaluate log4brains.
 - Docs move to a docs site or another repo.

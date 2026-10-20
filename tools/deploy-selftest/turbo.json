@@ -3,7 +3,7 @@
   "extends": ["//"],
   "tasks": {
     "test": {
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/infra/host/ebay-deploy"]
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/infra/host/ebay-deploy", "$TURBO_ROOT$/infra/docker-compose.yml", "$TURBO_ROOT$/.env.example"]
     }
   }
 }

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, integer, pgSchema, primaryKey, text, uuid } from "drizzle-orm/pg-core";
+import { check, integer, pgSchema, primaryKey, smallint, text, uuid } from "drizzle-orm/pg-core";
 import { ts } from "../columns.js";
 
 export const app = pgSchema("app");
@@ -80,4 +80,14 @@ export const deletionResultHourly = app.table(
     check("deletion_result_hourly_notifications_positive", sql`${table.notifications} > 0`),
     check("deletion_result_hourly_whole_hour", sql`extract(epoch FROM ${table.hourUtc})::bigint % 3600 = 0`),
   ],
+);
+
+// One row, overwritten on each probe request (ADR 0030). seen_at comes from the server's clock.
+export const probeSeen = app.table(
+  "probe_seen",
+  {
+    id: smallint("id").primaryKey().default(1),
+    seenAt: ts("seen_at").notNull(),
+  },
+  (table) => [check("probe_seen_single_row", sql`${table.id} = 1`)],
 );

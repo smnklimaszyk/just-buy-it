@@ -3,8 +3,24 @@
 # Install: /usr/local/sbin/ebay-deploy (root, mode 755). Run as root: ebay-deploy <40-character commit sha>
 set -euo pipefail
 
+# The healthchecks.io deploy check URL (ADR 0029), empty when there is no ping URL file.
+ping_url=""
+started=0
+
+# Sends one healthchecks.io ping: start, fail or success. A failed ping only warns and never
+# changes the exit code. The URL is not printed: it is the check's only credential.
+ping() {
+  [[ -n "$ping_url" ]] || return 0
+  local suffix="/$1"
+  [[ "$1" == success ]] && suffix=""
+  curl -fsS --max-time 10 --retry 2 -o /dev/null "$ping_url$suffix" ||
+    echo "ebay-deploy: warning: the healthchecks.io $1 ping failed" >&2
+}
+
+# After the start ping every failure also sends fail, a rollback included: the new SHA did not go live.
 die() {
   echo "ebay-deploy: $*" >&2
+  if ((started)); then ping fail; fi
   exit 1
 }
 
@@ -39,6 +55,24 @@ git -C "$repo" merge-base --is-ancestor "$sha" origin/main || die "$sha is not o
 # Compose needs it for every command, and DATABASE_URL embeds it without URL encoding.
 grep -Eq '^POSTGRES_PASSWORD=[0-9a-f]+$' "$root/.env" ||
   die "$root/.env must set POSTGRES_PASSWORD to a lowercase hex value (openssl rand -hex 32)"
+# The server's DATABASE_URL embeds it the same way; ops migrate sets it as the app role password.
+grep -Eq '^POSTGRES_APP_PASSWORD=[0-9a-f]{64}$' "$root/.env" ||
+  die "$root/.env must set POSTGRES_APP_PASSWORD to 64 lowercase hex characters (openssl rand -hex 32)"
+# The server refuses to start without the external probe's challenge code.
+grep -Eq '^DELETION_PROBE_CODE=[A-Za-z0-9_-]{40}$' "$root/.env" ||
+  die "$root/.env must set DELETION_PROBE_CODE to 40 characters of [A-Za-z0-9_-] (see the README)"
+
+# The healthchecks.io deploy check is optional; its URL file is root-only like .env.
+ping_file="$root/deploy-ping-url"
+if [[ -e "$ping_file" ]]; then
+  [[ "$(stat -c '%U:%G %a' "$ping_file")" == "root:root 600" ]] || die "$ping_file must be root:root 600"
+  ping_url="$(cat "$ping_file")"
+  [[ "$ping_url" =~ ^https://[^[:space:]]+$ ]] || die "$ping_file must hold one https:// URL on one line"
+else
+  echo "ebay-deploy: no deploy ping URL, skipping healthchecks.io pings"
+fi
+started=1
+ping start
 
 release="$root/releases/$sha"
 rm -rf "$release"
@@ -110,6 +144,7 @@ if compose_up "$sha" && serves "$sha"; then
   echo "$sha" >"$state/running"
   prune
   echo "ebay-deploy: $sha is live"
+  ping success
   exit 0
 fi
 

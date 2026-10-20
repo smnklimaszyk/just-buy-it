@@ -5,6 +5,11 @@
   "minimumReleaseAge": "7 days",
   "packageRules": [
     {
+      "description": "engines.node is a range kept by hand; the Node version itself lives in .nvmrc and the Dockerfile.",
+      "matchDepTypes": ["engines"],
+      "enabled": false
+    },
+    {
       "description": "New majors of these wait for an ADR 0005 update; approve them from the dependency dashboard.",
       "matchPackageNames": ["typescript", "pnpm", "turbo", "hono", "zod", "drizzle-orm", "drizzle-kit"],
       "matchUpdateTypes": ["major"],

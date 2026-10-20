@@ -84,16 +84,22 @@ jobs:
 
       # Runs the image's migrate command twice against the service database: the first run applies
       # every migration, the second applies none. Catches an image without packages/db/migrations.
+      # Each run also sets the app role password and runs the app role check; the second run proves
+      # the check passes on a database that is already migrated.
       - name: Image migrate
         if: github.event_name == 'push'
         run: |
           for run in first second; do
             echo "migrate, $run run"
-            docker run --rm --network host -e DATABASE_URL="$TEST_DATABASE_URL" -w /app/apps/ops \
+            docker run --rm --network host -e DATABASE_URL="$TEST_DATABASE_URL" \
+              -e POSTGRES_APP_PASSWORD="$POSTGRES_APP_PASSWORD" -w /app/apps/ops \
               ebay-sniper-server:ci node dist/main.js migrate
           done
           docker run --rm --entrypoint sh ebay-sniper-server:ci -c \
             'test ! -e /app/packages/db/dist/testing && test ! -e /app/packages/ebay/dist/testing'
+        env:
+          # A fixed test value for the throwaway service database, not a secret.
+          POSTGRES_APP_PASSWORD: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
   zizmor:
     runs-on: ubuntu-latest

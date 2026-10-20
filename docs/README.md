@@ -7,7 +7,7 @@
 - Anyone running this tool is responsible for complying with the eBay API License Agreement and eBay's policies for their use. Kept checks: gate 1a (a live EBAY_DE search returns EUR prices); gate 3 (a person buys through eBay checkout; no bid or buy automation, scraping or browser automation).
 - Kept controls: eBay call limits and call budget, minimal listing retention, no seller IDs sent to Claude, no data resale.
 - Hosting: a shared Docker host behind Traefik, `/opt/ebay-sniper`. Jobs can lag on a shared host; deletion endpoint needs an external probe. Backups: `/opt/backups` plus our dump without listing content.
-- Repo: Simon's GitHub Free account, no branch protection. CI and a fresh-context Claude Code review before merge; Simon's go before production deploys.
+- Repo: Simon's GitHub Free account. A ruleset on `main` requires a pull request with green CI; a fresh-context Claude Code review before merge by convention; Simon's go before production deploys.
 - Owner and sole builder: Simon Klimaszyk, with Claude Code.
 
 ## Key decisions
