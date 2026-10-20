@@ -13,7 +13,7 @@
     "@ebay-sniper/db": "workspace:*",
     "@ebay-sniper/ebay": "workspace:*",
     "@ebay-sniper/logging": "workspace:*",
-    "@hono/node-server": "2.1.4",
+    "@hono/node-server": "2.1.5",
     "hono": "4.13.13",
     "zod": "4.6.6"
   },
@@ -21,6 +21,6 @@
     "@types/node": "24.19.2",
     "tdd-guard-vitest": "0.2.0",
     "typescript": "6.0.3",
-    "vitest": "5.0.3"
+    "vitest": "5.0.4"
   }
 }
