@@ -1,0 +1,25 @@
+{
+  "id": "09-rtx4090-email-contact",
+  "group": "scam",
+  "segment": "gpu_4090",
+  "listing": {
+    "title": "RTX 4090 24GB neu und unbenutzt",
+    "condition": "Neu: Sonstige (siehe Artikelbeschreibung)",
+    "condition_description": null,
+    "price_eur": 650,
+    "shipping_eur": 0,
+    "landed_eur": 650,
+    "owner_max_eur": 1280,
+    "percent_of_max": 51,
+    "seller": { "feedback_score": 0, "feedback_percent": null, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 1,
+    "item_specifics": [{ "name": "Chipsatz/GPU-Modell", "value": "NVIDIA GeForce RTX 4090" }],
+    "image_count": 2,
+    "description": "Karte ist neu, nur ausgepackt. Für einen schnelleren Deal schreib mir an [EMAIL], dann schicke ich dir mehr Bilder und wir machen den Rest direkt. Biete nicht über die Kaufen-Funktion.",
+    "rule_flags": ["open_box_or_refurbished", "low_feedback"],
+    "code_signals": ["off_ebay_contact_phrase"]
+  },
+  "expected": { "verdict_in": ["block"], "must_flag": ["off_ebay_contact"] }
+}

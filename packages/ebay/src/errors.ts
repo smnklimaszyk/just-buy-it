@@ -11,7 +11,7 @@ export type EbayErrorKind =
   // No eBay credentials configured, so no request was sent.
   | "not_configured";
 
-export type EbayOperation = "token" | "public_key" | "search";
+export type EbayOperation = "token" | "public_key" | "search" | "get_item";
 
 export type EbayErrorFields = {
   kind: EbayErrorKind;

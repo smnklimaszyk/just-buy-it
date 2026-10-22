@@ -1,0 +1,30 @@
+{
+  "id": "01-rtx3090-founders",
+  "group": "legitimate",
+  "segment": "gpu_3090",
+  "listing": {
+    "title": "NVIDIA GeForce RTX 3090 Founders Edition 24GB GDDR6X mit OVP",
+    "condition": "Gebraucht",
+    "condition_description": "Voll funktionsfähig, keine Kratzer.",
+    "price_eur": 485,
+    "shipping_eur": 15,
+    "landed_eur": 500,
+    "owner_max_eur": 520,
+    "percent_of_max": 96,
+    "seller": { "feedback_score": 250, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 2,
+    "item_specifics": [
+      { "name": "Marke", "value": "NVIDIA" },
+      { "name": "Chipsatz/GPU-Modell", "value": "NVIDIA GeForce RTX 3090" },
+      { "name": "Speichergröße", "value": "24 GB" },
+      { "name": "Speichertyp", "value": "GDDR6X" }
+    ],
+    "image_count": 7,
+    "description": "Ich verkaufe meine RTX 3090 Founders Edition. Die Karte war gut zwei Jahre in meinem Gaming-PC verbaut und lief immer stabil, nie übertaktet, kein Mining. Temperaturen unter Last um 70 Grad. Originalverpackung und Adapterkabel sind dabei. Versand versichert mit DHL. Privatverkauf, keine Garantie und keine Rücknahme.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["pass"] }
+}

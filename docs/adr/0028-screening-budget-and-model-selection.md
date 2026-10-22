@@ -34,6 +34,13 @@ Claude spend runs in three lanes with separate daily caps and no borrowing. Mode
 | Choice | Strongest qualifying, unless a cheaper one has a better, non-overlapping Wilson interval on recall or false BLOCK. None qualifies: no config, gate stays red. The winner runs once on held-out (ADR 0026); if it fails, no config is activated; go back to tuning and re-sweep |
 | Upgrade | Monthly deprecation check. Candidate passes gate and rule; shadow budget 1.5 x p95 x 7-day volume (about $2.50 a day, $35 per 14 days); 30 paired evaluations, one extension of up to 14 days by a new PR; `shadow_report` compares PASS/CAUTION/BLOCK rates, failure codes, latency and cost; switch by PR |
 
+**MVP note (2026-10-21)**:
+
+- No lanes, no shadow sampling, no model sweep. The model is fixed at `claude-sonnet-5-5` with effort `medium`; the env accepts no other value.
+- Two daily caps per Berlin day, both checked in one reservation statement on `app.llm_usage_daily` before each call: `CLAUDE_DAILY_CALL_LIMIT` (default 40) and `CLAUDE_DAILY_SPEND_LIMIT_USD` (default 2, kept in micro-USD). Each call reserves its worst case, USD 0.062: at most 16,000 input tokens (12,000-byte user message, 3,000-byte system prompt, 1,000 tokens for framing and the schema) at USD 2 per million, plus `max_tokens` 3,000 output tokens at USD 10 per million. After the call the reservation is settled from `usage`; when no usage came back the worst case is kept as spent. Retries count against both caps.
+- There is no larger retry on `truncated`; the cap is the cost bound. With worst-case calls only, the spend cap stops at 32 calls; with typical calls the call cap stops at 40, at about USD 0.40 to 1.30. The real worst case is USD 2 a day, about USD 60 a month.
+- Recommended to the owner, not built: a Console workspace spend limit of USD 75 a month for this key.
+
 The sweep runner refuses to start unless `evals/sweeps/rule.v1.ts` is committed and unchanged; the report records the rule path, `rule_commit` and start time. CI job `evaluator-config-guard` runs on PRs that add an evaluator config or change `evaluator_config_id`. It fails unless the config names a `sweep_report` on the branch, `rule_commit` is an ancestor of it, the rule is unchanged since, and the rule returns that config. A changed rule is a new file (`rule.v2.ts`) with a new sweep.
 
 ## Alternatives considered

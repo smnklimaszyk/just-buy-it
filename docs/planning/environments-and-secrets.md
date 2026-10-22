@@ -11,8 +11,8 @@ Status 2026-10-19. Owner: Simon Klimaszyk (D-01). From [ADR 0011](../adr/0011-en
 | Runs on | Simon's Mac, Compose | GitHub Actions, `pull_request` and `push` | `docker compose run --rm worker contract:run`, over SSH on Simon's go | Host `intra-ai`, Compose project `/opt/ebay-sniper` |
 | Postgres | `postgres:18` container | Postgres 18 service | Production database, call counter only | `postgres:18` in the project, not published |
 | eBay | Fixtures; deletion route with a test token | Fixtures | Production keyset, rules below | Production keyset |
-| Claude | Personal key in `dev`, opt-in tests | None | None | Service-account key in `prod` (Phase 3) |
-| Email | Log; optional SES dev user, simulator only | Log | Sends nothing | SES `ses-sender-prod` (Phase 1) |
+| Claude | Personal key in `dev`, opt-in tests; the offline eval set runs by hand only | None | None | MVP: the owner's key in `.env`, capped at 40 calls and USD 2 a day; service-account key in `prod` later (Phase 3) |
+| Email | Log; optional SES dev user, simulator only | Log | Sends nothing | MVP: SMTP from `info@intra-ai.de` on `mail.intra-ai.de:587` ([ADR 0035](../adr/0035-alert-email-over-smtp.md)); SES `ses-sender-prod` for login codes (Phase 1) |
 
 - No staging host; CI has only `GITHUB_TOKEN`. Edge: the host's Traefik (`/opt/traefik/dynamic/ebay-sniper.yml`, resolver `le`); containers bind to 127.0.0.1 (server `:3140`).
 - **Deploy** only on Simon's explicit go (D-37): `ebay-deploy <sha>` over SSH ([ADR 0029](../adr/0029-ci-cd-and-deploy.md)). No deploy user; GitHub holds no host credential.
@@ -60,11 +60,14 @@ Production: `/opt/ebay-sniper/.env`, `root:root 600`, every value also in the PM
 | `DELETION_PROBE_CODE` | server, UptimeRobot; checked by the deploy | `.env`, PM, monitor URL | 40 chars | On leak, with the monitor URL |
 | `POSTGRES_PASSWORD` | db bootstrap; migrate (role `ebay_sniper`) | `.env`, PM | `openssl rand -hex 32` (hex, because Compose embeds it in a URL). A separate `migrator` role comes in Phase 1, see section 4 | On leak (`ALTER ROLE`, `.env`, restart) |
 | `POSTGRES_APP_PASSWORD` | server (role `app`); migrate sets it | `.env`, PM | `openssl rand -hex 32`, 64 hex chars; the deploy refuses other values | On leak: `.env` and PM, then run the migrate service (it sets the new password) and restart the server; a deploy of the running SHA is a no-op |
+| `POSTGRES_WORKER_PASSWORD` | worker (role `worker`); migrate sets it | `.env`, PM | `openssl rand -hex 32`, 64 hex chars; the deploy refuses other values | On leak: `.env` and PM, then deploy or run the migrate service and restart the worker |
+| `POSTGRES_DASHBOARD_PASSWORD` | server's dashboard listener (role `dashboard`, read-only); migrate sets it | `.env`, PM | `openssl rand -hex 32`, 64 hex chars; the deploy refuses other values | On leak: as the worker password, then restart the server |
+| `SMTP_PASSWORD` | worker (alert email, ADR 0035) | `.env`, PM | The `info@intra-ai.de` mailbox password, set at the mail provider; written by the host's `ebay-set-smtp` helper | On leak: change it at the mail provider, then `.env`, PM and a worker restart |
 | `backup_dump` password | backup job | `.env` (backup service), PM | SELECT on `app`, `auth`, `drizzle`, allowed `pgboss` tables; none on `ebay_live` | On leak |
 | healthchecks.io ping URLs | worker, backup, deploy | `.env`; the `deploy` URL in `/opt/ebay-sniper/deploy-ping-url` (`root:root 600`, one line; without the file the deploy skips its pings), PM | [ADR 0030](../adr/0030-heartbeats-and-external-probe.md) | On leak |
 | SES key prod / dev | apps / local | `.env`, PM | `ses-sender-prod`; `ses-sender-dev` (simulator only) | On leak; prod yearly |
 | `BETTER_AUTH_SECRETS` | server | `.env`, PM | `1:` + `openssl rand -base64 32` | Prepend `2:new,`; drop old after sessions expire |
-| `ITEM_KEY_V1`, `ITEM_KEY_VERSION` | server, worker | `.env`, PM, offline copy | `openssl rand -base64 32` | Only on leak; loss breaks joins |
+| `ITEM_KEY_V1`, `ITEM_KEY_VERSION` | worker (MVP), later server too | `.env`, PM, offline copy | `openssl rand -base64 32` (44 characters; the deploy refuses other values) | Only on leak; loss breaks joins |
 | Object storage put key | backup job | `.env`, PM | Upload only | On leak |
 | Object storage verify key | `backup-verify.yml` (Phase 2) | Repository secret, PM; never on the host | List only | On leak |
 | Object storage drill key | restore drill | PM only | `s3:GetObject`, `s3:GetObjectVersion` | After use in an incident |
@@ -83,12 +86,13 @@ install -m 600 -o root -g root /dev/null /opt/ebay-sniper/.env
 openssl rand -hex 32                                    # deletion token, 64 chars
 openssl rand -base64 30 | tr '+/' '-_' | tr -d '\n'    # DELETION_PROBE_CODE, 40 chars
 openssl rand -hex 32                                    # POSTGRES_PASSWORD, POSTGRES_APP_PASSWORD
+openssl rand -hex 32                                    # POSTGRES_WORKER_PASSWORD, POSTGRES_DASHBOARD_PASSWORD (one each)
 openssl rand -base64 32                                 # BETTER_AUTH_SECRETS entry, ITEM_KEY_V1
 stat -c '%U:%G %a' /opt/ebay-sniper/.env                # must print root:root 600
 install -m 600 -o root -g root /dev/null /opt/ebay-sniper/deploy-ping-url  # then write the healthchecks.io deploy URL into it
 ```
 
-Values must not contain `$`: Compose interpolates them into the server and migrate settings.
+Values must not contain `$`: Compose interpolates them into the server, worker and migrate settings. `ALERT_FROM=Just-Buy-It <info@intra-ai.de>` is written unquoted, spaces and angle brackets included: Compose reads it whole, and a partly quoted value (`"Just-Buy-It" <...>`) makes Compose refuse the file. Nothing may `source` the `.env` in a shell; the deploy and `live-check` only grep it.
 
 Token rule: `^[A-Za-z0-9_-]{32,80}$`. Rotation: vendor console, `.env`, PM, `docker compose up -d`.
 
@@ -115,7 +119,29 @@ Token rule: `^[A-Za-z0-9_-]{32,80}$`. Rotation: vendor console, `.env`, PM, `doc
 | `ANTHROPIC_API_KEY`, `_WORKSPACE_ID`, `_MONTHLY_LIMIT_USD` | worker, eval | 3 | Worker checks the `anthropic-workspace-id` header; limit 360 |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | eval | 3 | `https://cloud.langfuse.com` |
 
+**MVP (2026-10-21)**: the worker runs from the same image as the server and gets an explicit variable list from Compose, never the whole `.env`. `apps/worker/src/env.ts` names failing variables only, never values, and treats an empty value as unset.
+
+| Variable | Used by | Required | Value / rule |
+|---|---|---|---|
+| `DATABASE_URL` | worker | yes | Not in `.env`; Compose builds `postgres://worker:${POSTGRES_WORKER_PASSWORD}@postgres:5432/ebay_sniper` |
+| `DB_STATEMENT_TIMEOUT_MS` | worker | no | Default 10000 |
+| `GIT_SHA` | worker, server | yes | From the image |
+| `EBAY_ENVIRONMENT`, `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET` | worker | yes | `production`; the existing production keyset |
+| `EBAY_ENDUSERCTX_POSTAL_CODE` | worker | no | Default `80331` |
+| `ITEM_KEY_V1` | worker | yes | 32 random bytes, base64 (`openssl rand -base64 32`), 44 characters |
+| `BUYER_PROFILE` | worker | no | `company` (default) or `private`; changes only the VAT line in the email |
+| `ANTHROPIC_API_KEY` | worker | no | Unset: no screening, alerts say "Not screened by Claude: not_configured" |
+| `CLAUDE_MODEL` | worker | no | Only `claude-sonnet-5-5` is accepted |
+| `CLAUDE_DAILY_CALL_LIMIT`, `CLAUDE_DAILY_SPEND_LIMIT_USD` | worker, `live-check` | no | Defaults 40 and 2 (at most 2 decimal places); 0 switches screening off |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `ALERT_FROM` | worker | all or none | Host values `mail.intra-ai.de`, `587`, `info@intra-ai.de`, (secret), `Just-Buy-It <info@intra-ai.de>`. A partial set stops the worker and the deploy, naming the missing variables. None: alerts stay pending |
+| `ALERT_TO` | worker | yes | `info@intra-ai.de` |
+| `LOG_LEVEL` | worker | no | `info` |
+| `DASHBOARD_PORT`, `DASHBOARD_DATABASE_URL` | server | yes | Compose sets port `3001` (published as `127.0.0.1:3142` only) and builds `postgres://dashboard:${POSTGRES_DASHBOARD_PASSWORD}@postgres:5432/ebay_sniper` |
+| `POSTGRES_WORKER_PASSWORD`, `POSTGRES_DASHBOARD_PASSWORD` | migrate; the worker's and the dashboard's URLs | yes | 64 lowercase hex characters each; `ebay-deploy` checks them before any docker call |
+
 **Phase 0 S3 (2026-10-20)**: two database roles. `ebay_sniper` is the image's superuser, owner of the `ebay_sniper` database and the migrator, with `POSTGRES_PASSWORD` from `.env`; a separate non-superuser `migrator` role is deferred to Phase 1. `app` is the server's role: `LOGIN`, not superuser, `statement_timeout` 2 s, `SELECT`, `INSERT` and `UPDATE` on `deletion_event`, `deletion_result_hourly`, `api_usage_hourly` and `probe_seen` only. Migration `0003_app_role` creates it; on every deploy `ops migrate` then sets its password from `POSTGRES_APP_PASSWORD`, sent as a SCRAM verifier (never the plaintext) under a cluster-wide role lock, and checks it by connecting as `app` and running the server's writes in a rolled-back transaction. A failure stops the deploy before the server is replaced. `DATABASE_URL` is not in `.env`: Compose builds `postgres://app:${POSTGRES_APP_PASSWORD}@postgres:5432/ebay_sniper` for the server and the `ebay_sniper` URL for `migrate`, which also gets `POSTGRES_APP_PASSWORD`. The server no longer loads the whole `.env` through `env_file`; it gets an explicit variable list, so `POSTGRES_PASSWORD` and secrets meant for other services are not in its environment. `POSTGRES_PASSWORD` takes effect only when the data volume is first created; a rotation is `ALTER ROLE ebay_sniper PASSWORD '...'` through `docker compose exec postgres psql`, then the `.env` edit and a deploy.
+
+**MVP (2026-10-21)**: two more roles, created by migration `0005_worker_and_dashboard_roles`. `worker` is the worker's role: `USAGE` on `app` and `ebay_live`; `SELECT` on `app.feed` and `app.segment_rule`; `SELECT`, `INSERT`, `UPDATE`, `DELETE` on the worker's own tables; `SELECT`, `INSERT`, `UPDATE` on `app.ebay_quota_window` and `app.api_usage_hourly` (for `reserve_ebay_call`); `EXECUTE` on `app.reserve_ebay_call`; owner of schema `pgboss`; nothing on `deletion_event`, `deletion_result_hourly`, `probe_seen` or `audit_event`; `statement_timeout` 10 s. `dashboard` is the dashboard listener's role: `SELECT` on exactly the tables and columns the dashboard pages show, nothing else, `statement_timeout` 2 s and `default_transaction_read_only` on. `app` gains no rights. On every deploy `ops migrate` sets both passwords from `POSTGRES_WORKER_PASSWORD` and `POSTGRES_DASHBOARD_PASSWORD` the same way as `app`'s, then connects as each role and runs a probe in a rolled-back transaction (`worker_role_check_passed`, `dashboard_role_check_passed` in the migrate log). A failure stops the deploy before any container is replaced. Connection budget: 19 of the 27 non-superuser connections at peak (server 3, dashboard 2, worker 10, pg-boss 4).
 
 ## 5. Checks
 

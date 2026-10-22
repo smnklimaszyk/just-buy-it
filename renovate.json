@@ -16,6 +16,14 @@
       "dependencyDashboardApproval": true
     },
     {
+      "description": "Any pg-boss update can change its schema version, and the migrate step refuses a version it has no upgrade path for (ADR 0005); approve every pg-boss update from the dependency dashboard.",
+      "matchPackageNames": ["pg-boss"],
+      "dependencyDashboardApproval": true,
+      "prBodyNotes": [
+        "Check whether `pgboss.schema` in pg-boss's `package.json` changes. A new schema version needs an upgrade path in `packages/db/src/queue/migrate-queue.ts` before this can merge."
+      ]
+    },
+    {
       "description": "Stay on Drizzle 0.x until an ADR covers the 1.0 move (migration folder layout changes).",
       "matchPackageNames": ["drizzle-orm", "drizzle-kit"],
       "allowedVersions": "<1.0.0"

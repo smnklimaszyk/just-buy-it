@@ -61,6 +61,24 @@ grep -Eq '^POSTGRES_APP_PASSWORD=[0-9a-f]{64}$' "$root/.env" ||
 # The server refuses to start without the external probe's challenge code.
 grep -Eq '^DELETION_PROBE_CODE=[A-Za-z0-9_-]{40}$' "$root/.env" ||
   die "$root/.env must set DELETION_PROBE_CODE to 40 characters of [A-Za-z0-9_-] (see the README)"
+# The worker's DATABASE_URL and the server's dashboard URL embed these the same way; ops migrate
+# sets them as the worker and dashboard role passwords.
+for name in POSTGRES_WORKER_PASSWORD POSTGRES_DASHBOARD_PASSWORD; do
+  grep -Eq "^$name=[0-9a-f]{64}\$" "$root/.env" ||
+    die "$root/.env must set $name to 64 lowercase hex characters (openssl rand -hex 32)"
+done
+# The worker's item key secret: 32 random bytes in base64, so 43 characters and one "=".
+grep -Eq '^ITEM_KEY_V1=[A-Za-z0-9+/]{43}=$' "$root/.env" ||
+  die "$root/.env must set ITEM_KEY_V1 to 44 base64 characters (openssl rand -base64 32)"
+# The worker refuses a partial SMTP set; an empty value counts as unset, as in the worker.
+smtp_missing=()
+for name in SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD ALERT_FROM; do
+  grep -Eq "^$name=.+" "$root/.env" || smtp_missing+=("$name")
+done
+if ((${#smtp_missing[@]} > 0 && ${#smtp_missing[@]} < 5)); then
+  missing_list="$(printf '%s, ' "${smtp_missing[@]}")"
+  die "$root/.env sets SMTP partially, missing ${missing_list%, } (set all five or none)"
+fi
 
 # The healthchecks.io deploy check is optional; its URL file is root-only like .env.
 ping_file="$root/deploy-ping-url"
@@ -138,26 +156,74 @@ fi
 ((migrate_status == 0)) ||
   die "migration for $sha failed (exit $migrate_status), the running release is unchanged"
 
-echo "ebay-deploy: starting $sha"
-if compose_up "$sha" && serves "$sha"; then
-  [[ -n "$running" ]] && echo "$running" >"$state/previous"
-  echo "$sha" >"$state/running"
-  prune
-  echo "ebay-deploy: $sha is live"
-  ping success
-  exit 0
-fi
+# True when the release of the SHA in $1 defines a worker service. The output is read whole
+# before grep, so an early grep exit cannot fail the pipe.
+has_worker() {
+  local services
+  services="$(compose "$1" config --services 2>/dev/null)" || return 1
+  grep -qx worker <<<"$services"
+}
 
-echo "ebay-deploy: $sha failed to start or /healthz did not report it within 60 s" >&2
+# --wait waits for the worker's healthcheck (the heartbeat file, healthy about 30 s after start).
+worker_up() {
+  compose "$1" up -d --no-deps --wait --wait-timeout 90 worker
+}
 
-if [[ -n "$running" ]]; then
-  echo "ebay-deploy: rolling back to $running"
-  if compose_up "$running" && serves "$running"; then
-    die "deploy of $sha failed, rolled back to $running"
+# Stops every worker container of the project, whichever release started it.
+stop_worker() {
+  docker ps -q --filter label=com.docker.compose.project=ebay-sniper \
+    --filter label=com.docker.compose.service=worker | xargs -r docker stop >/dev/null
+}
+
+# Puts the running release's worker back, or stops the new one when that release has none.
+worker_back() {
+  if has_worker "$running"; then
+    worker_up "$running"
+    return
   fi
-  die "deploy of $sha failed and the rollback to $running failed too, check the host now"
+  echo "ebay-deploy: $running has no worker, stopping the worker container"
+  stop_worker
+}
+
+# Rolls back to the running release and exits 1. $1 is "server" when only the server was
+# replaced, "worker" when the worker was replaced too.
+roll_back() {
+  if [[ -n "$running" ]]; then
+    echo "ebay-deploy: rolling back to $running"
+    if compose_up "$running" && serves "$running" && { [[ "$1" == server ]] || worker_back; }; then
+      die "deploy of $sha failed, rolled back to $running"
+    fi
+    die "deploy of $sha failed and the rollback to $running failed too, check the host now"
+  fi
+  # Run from / so compose does not pick up a compose file from the caller's directory.
+  (cd / && docker compose -p ebay-sniper down) || echo "ebay-deploy: docker compose down failed" >&2
+  die "deploy of $sha failed, no previous release, stopped the new containers"
+}
+
+# The server first, as before; the worker is not touched until the new server serves.
+echo "ebay-deploy: starting $sha"
+if ! { compose_up "$sha" && serves "$sha"; }; then
+  echo "ebay-deploy: $sha failed to start or /healthz did not report it within 60 s" >&2
+  roll_back server
 fi
 
-# Run from / so compose does not pick up a compose file from the caller's directory.
-(cd / && docker compose -p ebay-sniper down) || echo "ebay-deploy: docker compose down failed" >&2
-die "deploy of $sha failed, no previous release, stopped the new containers"
+# Migrations are expand-only, so the old worker ran against the new schema until now.
+if has_worker "$sha"; then
+  echo "ebay-deploy: starting the worker of $sha"
+  if ! worker_up "$sha"; then
+    echo "ebay-deploy: the worker of $sha did not get healthy within 90 s" >&2
+    roll_back worker
+  fi
+else
+  # A release from before the worker (a rollback by hand to an older SHA): a worker left by a
+  # newer release would keep polling eBay, calling Claude and sending email next to it.
+  echo "ebay-deploy: $sha has no worker, stopping the worker container"
+  stop_worker || echo "ebay-deploy: warning: could not stop the worker container, check docker ps" >&2
+fi
+
+[[ -n "$running" ]] && echo "$running" >"$state/previous"
+echo "$sha" >"$state/running"
+prune
+echo "ebay-deploy: $sha is live"
+ping success
+exit 0

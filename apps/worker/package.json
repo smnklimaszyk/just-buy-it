@@ -1,0 +1,27 @@
+{
+  "name": "@ebay-sniper/worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint .",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ebay-sniper/db": "workspace:*",
+    "@ebay-sniper/domain": "workspace:*",
+    "@ebay-sniper/ebay": "workspace:*",
+    "@ebay-sniper/llm": "workspace:*",
+    "@ebay-sniper/logging": "workspace:*",
+    "@ebay-sniper/notify": "workspace:*",
+    "zod": "4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "tdd-guard-vitest": "0.2.0",
+    "typescript": "6.0.3",
+    "vitest": "5.0.4"
+  }
+}

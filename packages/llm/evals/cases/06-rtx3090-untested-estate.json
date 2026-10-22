@@ -1,0 +1,28 @@
+{
+  "id": "06-rtx3090-untested-estate",
+  "group": "legitimate",
+  "segment": "gpu_3090",
+  "listing": {
+    "title": "RTX 3090 24GB Grafikkarte aus Nachlass",
+    "condition": "Gebraucht",
+    "condition_description": "Ungetestet.",
+    "price_eur": 380,
+    "shipping_eur": 20,
+    "landed_eur": 400,
+    "owner_max_eur": 520,
+    "percent_of_max": 77,
+    "seller": { "feedback_score": 37, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 9,
+    "item_specifics": [
+      { "name": "Marke", "value": "Zotac" },
+      { "name": "Chipsatz/GPU-Modell", "value": "NVIDIA GeForce RTX 3090" }
+    ],
+    "image_count": 3,
+    "description": "Die Karte stammt aus dem PC meines verstorbenen Onkels. Ich kenne mich damit nicht aus und kann sie nicht testen, der PC wurde schon entsorgt. Äußerlich sieht sie gut aus. Verkauf wie gesehen, ungetestet, ohne Garantie.",
+    "rule_flags": ["untested"],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["caution", "block"] }
+}

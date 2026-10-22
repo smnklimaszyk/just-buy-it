@@ -1,0 +1,30 @@
+{
+  "id": "02-rtx4090-business-invoice",
+  "group": "legitimate",
+  "segment": "gpu_4090",
+  "listing": {
+    "title": "Gigabyte GeForce RTX 4090 Gaming OC 24GB Grafikkarte",
+    "condition": "Gebraucht",
+    "condition_description": "Geprüft, mit 12 Monaten Gewährleistung.",
+    "price_eur": 1250,
+    "shipping_eur": 0,
+    "landed_eur": 1250,
+    "owner_max_eur": 1280,
+    "percent_of_max": 98,
+    "seller": { "feedback_score": 4180, "feedback_percent": 99.7, "account_type": "business" },
+    "returns": { "accepted": true, "period_days": 30 },
+    "item_location_country": "DE",
+    "listing_age_hours": 5,
+    "item_specifics": [
+      { "name": "Marke", "value": "Gigabyte" },
+      { "name": "Chipsatz/GPU-Modell", "value": "NVIDIA GeForce RTX 4090" },
+      { "name": "Speichergröße", "value": "24 GB" },
+      { "name": "Herstellernummer", "value": "GV-N4090GAMING OC-24GD" }
+    ],
+    "image_count": 9,
+    "description": "Gebrauchte RTX 4090 Gaming OC aus einer Leasingrückläufer-Workstation. Jede Karte wird bei uns gereinigt und 4 Stunden unter Volllast getestet. Sie erhalten eine Rechnung mit ausgewiesener MwSt. Gewährleistung 12 Monate, 30 Tage Rückgaberecht. Lieferumfang: Karte und Stromadapter, ohne Originalkarton. Versand innerhalb von 24 Stunden.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["pass"] }
+}

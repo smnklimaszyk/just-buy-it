@@ -1,0 +1,25 @@
+{
+  "id": "11-rtx3090-box-only",
+  "group": "scam",
+  "segment": "gpu_3090",
+  "listing": {
+    "title": "RTX 3090 OVP Founders Edition",
+    "condition": "Gebraucht",
+    "condition_description": null,
+    "price_eur": 275,
+    "shipping_eur": 5,
+    "landed_eur": 280,
+    "owner_max_eur": 520,
+    "percent_of_max": 54,
+    "seller": { "feedback_score": 19, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 6,
+    "item_specifics": [{ "name": "Marke", "value": "NVIDIA" }],
+    "image_count": 3,
+    "description": "Verkauft wird nur der Originalkarton der Founders Edition, ohne Karte. Ideal zum Sammeln oder für den Wiederverkauf. Keine Grafikkarte enthalten. Kein Umtausch.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["block"], "must_flag": ["box_or_picture_only"] }
+}

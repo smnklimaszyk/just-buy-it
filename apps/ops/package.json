@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@ebay-sniper/db": "workspace:*",
+    "@ebay-sniper/domain": "workspace:*",
     "@ebay-sniper/logging": "workspace:*",
     "zod": "4.6.6"
   },

@@ -67,6 +67,21 @@ code="$(head -c 71680 /dev/zero | tr '\0' 'x' |
   status_of -X POST -H 'content-type: application/json' --data-binary @- "$base/ebay/account-deletion")"
 check "70 KB POST to /ebay/account-deletion is 413" "got $code" [ "$code" = 413 ]
 
+# MVP section 8.1: the dashboard has its own listener on the host's loopback and no public path.
+for dashboard_path in /candidates /alerts /prices /rejections; do
+  code="$(status_of "$base$dashboard_path")"
+  check "$dashboard_path is 404 on the public site" "got $code" [ "$code" = 404 ]
+done
+
+# curl reports a connect time of 0 when no connection was made (refused or dropped).
+host="${base#*://}"
+host="${host%%/*}"
+host="${host%%:*}"
+dashboard_port="${SMOKE_DASHBOARD_PORT:-3142}"
+connect="$(curl -s --connect-timeout 5 --max-time 8 -o /dev/null -w '%{time_connect}' \
+  "http://$host:$dashboard_port/" 2>/dev/null || true)"
+check "port $dashboard_port on $host accepts no connection" "connected in ${connect}s" [ "$connect" = 0.000000 ]
+
 if [[ $failures -gt 0 ]]; then
   echo "$failures check(s) failed"
   exit 1

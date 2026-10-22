@@ -1,0 +1,28 @@
+{
+  "id": "13-ddr5-sodimm",
+  "group": "scam",
+  "segment": "ram_ddr5",
+  "listing": {
+    "title": "32GB DDR5 4800 Kit 2x16GB Kingston",
+    "condition": "Gebraucht",
+    "condition_description": null,
+    "price_eur": 115,
+    "shipping_eur": 5,
+    "landed_eur": 120,
+    "owner_max_eur": 179.2,
+    "percent_of_max": 67,
+    "seller": { "feedback_score": 230, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 10,
+    "item_specifics": [
+      { "name": "Kapazität", "value": "32 GB" },
+      { "name": "Speichertyp", "value": "DDR5 SDRAM" }
+    ],
+    "image_count": 2,
+    "description": "Zwei Module à 16 GB, aus meinem Laptop ausgebaut, nachdem ich aufgerüstet habe. Es sind kurze Notebook-Module (262 Pin), passen nicht in normale Desktop-Mainboards. Funktionieren einwandfrei.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["caution", "block"], "must_flag": ["wrong_model"] }
+}

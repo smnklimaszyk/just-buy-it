@@ -4,6 +4,7 @@ import { addHourlyCounts, createPool, recordDeletionEvent, recordProbeSeen } fro
 import { createLogger, loggerOptions } from "@ebay-sniper/logging";
 import { createApp, type IncomingNotification } from "./app.js";
 import { systemClock } from "./clock.js";
+import { createDashboardApp, dashboardData } from "./dashboard.js";
 import { createDeletionCounters } from "./deletion-counters.js";
 import { createDeletionQueue } from "./deletion-queue.js";
 import { createKeyLookup } from "./ebay-wiring.js";
@@ -28,6 +29,15 @@ const pool = createPool({
   applicationName: "ebay-sniper-server",
   onError: (error) =>
     log.warn({ event: "database_pool_error", err_code: "code" in error ? String(error.code) : error.name }),
+});
+
+// The dashboard's own read-only pool as role dashboard (section 8.1).
+const dashboardPool = createPool({
+  connectionString: env.dashboardDatabaseUrl,
+  max: 2,
+  applicationName: "ebay-sniper-dashboard",
+  onError: (error) =>
+    log.warn({ event: "dashboard_pool_error", err_code: "code" in error ? String(error.code) : error.name }),
 });
 
 const counters = createDeletionCounters({
@@ -82,11 +92,32 @@ server.listen(env.port, "0.0.0.0", () =>
 );
 counters.start();
 
+// Section 8.1: all interfaces inside the container, which Docker's port mapping needs; Compose
+// publishes it on 127.0.0.1 only, and Traefik never routes to it.
+const dashboardApp = createDashboardApp({
+  data: dashboardData(dashboardPool),
+  clock: systemClock,
+  gitSha: env.gitSha,
+  log,
+});
+const dashboardServer = createServer(getRequestListener(dashboardApp.fetch));
+dashboardServer.listen(env.dashboardPort, "0.0.0.0", () =>
+  logger.info({ port: env.dashboardPort }, "dashboard listening"),
+);
+
+// Both listeners stop together; the dashboard has no work to drain.
+const listeners = [server, dashboardServer];
 const shutdown = createShutdown({
-  server,
+  server: {
+    close: () => listeners.forEach((s) => s.close()),
+    closeIdleConnections: () => listeners.forEach((s) => s.closeIdleConnections()),
+    closeAllConnections: () => listeners.forEach((s) => s.closeAllConnections()),
+  },
   queue,
   counters,
-  endPool: () => pool.end(),
+  endPool: async () => {
+    await Promise.all([pool.end(), dashboardPool.end()]);
+  },
   log: { ...log, flush: () => logger.flush() },
   now: () => performance.now(),
   exit: (code) => process.exit(code),

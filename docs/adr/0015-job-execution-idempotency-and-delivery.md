@@ -56,6 +56,28 @@ The claim transaction also reserves budget (ADR-0019) and writes provenance: non
 
 `send` claims `pending` or stale `sending` (45 s, attempts < 3), rechecks eBay, sends with the delivery ID in `EmailTags` and footer, writes `sent`/`dropped` fenced. SES error -> `pending`; timeout stays `sending` (one duplicate possible). `digest` is unique on (digest_kind, window_start), claims deliveries by setting null `digest_id`, same lease and fencing. `relay` re-enqueues deliveries pending 2 minutes or stale, and evaluations `running` past lease or `released` over 10 minutes; attempt-3 rows become `failed` with ops email or review entry.
 
+**MVP amendment (2026-10-21)**:
+
+- **Enqueue in the transaction:** `fromDrizzle` is not used. A job that follows a write is sent with pg-boss's `db` option on the transaction's checked-out `pg` client (`{ db: { executeSql: (text, values) => client.query(text, values) } }`). A crash before commit leaves neither the job nor the rows.
+- **MVP queues** (registry in `packages/db/src/queue/registry.ts`; payloads `z.strictObject` of `feedId`, `segment`, `listingId`, `deliveryId`; retention 21600 s, `deleteAfterSeconds` 3600, dead letter `<name>.dead`). Each handler passes an `AbortSignal` deadline to every outbound call; `expireInSeconds` is above the deadline.
+
+  | Queue | Trigger | Policy / key | Deadline | Expiry s | Retries | Concurrency |
+  |---|---|---|---|---|---|---|
+  | poll-tick | `* * * * *` | exclusive | 10 s | 60 | 0 | 1 |
+  | poll | poll-tick when due | exclusive, `feedId` | 100 s | 150 | 0 | 1 |
+  | sweep | poll-tick when due | exclusive, `segment` | 40 s | 90 | 0 | 1 |
+  | enrich | poll or sweep transaction, relay | standard | 40 s | 90 | 0 | 2 |
+  | screen | enrich transaction, relay | standard | 75 s | 180 | 1, 30 s delay | 1 |
+  | send | screen or enrich transaction, relay | exclusive, `deliveryId` | 40 s | 90 | 0 | 1 |
+  | relay | `* * * * *` | exclusive | 20 s | 60 | 0 | 1 |
+  | purge | `*/15 * * * *` | exclusive | 120 s | 600 | 0 | 1 |
+
+  No `decide`, `recheck`, `digest`, `quota-read`, `breaker` or `screen.*` stage queues yet.
+- **Run rows:** `poll` and `sweep` insert their `poll_run` as `running` in an autocommit statement before the first request and finish it in `finally`. A `running` row older than 5 minutes is stale and counts as `error` for the due rule and the breaker (5 failed runs in a row pause a feed for 15 minutes).
+- **Claude claim:** one stage, `app.screening` unique on (item_key, prompt_version), lease 90 s, at most 2 paid attempts per key, crashes included. A handled retryable failure on attempt 1 releases the lease at once (`lease_until = now()`), so the pg-boss retry 30 s later takes over as attempt 2; a stale attempt 2 ends `failed` with `attempts_exhausted`.
+- **Delivery:** one alert per item (`alert` unique on (item_key, seq), `seq` always 1) and one `alert_delivery` per alert and recipient. Before the claim, `send` checks SMTP configured, SMTP pause, the message still there, and the rate limit (10 an hour, 60 a Berlin day); a failed gate sets `hold_reason` and `next_attempt_at` and leaves `attempt` unchanged. Only the claim increments `attempt`, so it counts real SMTP attempts, at most 5. **Relay is the one retry path for send:** the `send` queue has 0 pg-boss retries; a transient SMTP failure writes `pending` with a backoff of 1, 5, 15 or 30 minutes, and relay (every minute) enqueues due `pending` rows and `sending` rows past their 60 s lease. Relay also re-enqueues lost `enrich` and `screen` jobs after 10 minutes; it never repeats a getItem that ran.
+- **Pools and shutdown:** the worker's `pg` pool has 10 connections (9 handler slots plus 1 for the heartbeat), pg-boss its own 4; no client is held across an eBay, Claude or SMTP call. Shutdown is `stop({ graceful: true, timeout: 60_000 })` with `stop_grace_period: 75s`.
+
 ## Alternatives considered
 
 One alert table (no digest, recipient or checkpoint tracking); transactional `decide` (Drizzle cannot join pg-boss's transaction); key after the call, drain only or claim inside the call (crashes repay untraced); `stately` `send` (relay races the retry); Redis or a broker (extra service); at-most-once (loses deals).

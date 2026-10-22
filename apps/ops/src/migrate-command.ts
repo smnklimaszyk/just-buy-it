@@ -1,32 +1,64 @@
-import {
-  MigrateLockTimeoutError,
-  type checkAppRole,
-  type MigrateLog,
-  type runMigrations,
-  type setAppRolePassword,
-} from "@ebay-sniper/db";
+import { MigrateLockTimeoutError, type checkAppRole, type MigrateLog, type runMigrations } from "@ebay-sniper/db";
+import type {
+  checkDashboardRole,
+  checkWorkerRole,
+  migrateQueue,
+  ServiceRole,
+  setRolePassword,
+} from "@ebay-sniper/db/queue";
 import { EnvError, type Env } from "./env.js";
 
 export type CommandLog = { info: MigrateLog; error: MigrateLog };
 
-// Runs on every deploy, in this order: migrations, the app role password, the app role check
-// (spec S3, section 2.3). A failure stops the deploy before the server is replaced.
+// Runs on every deploy (sections 2.2 and 2.5). Under the migrate lock: the Drizzle migrations, the
+// passwords of app, worker and dashboard, then the pg-boss schema and queues. After it: a check as
+// each role. A failure stops the deploy before any container is replaced.
 export async function runMigrateCommand(deps: {
   loadEnv: () => Env;
   runMigrations: typeof runMigrations;
-  setAppRolePassword: typeof setAppRolePassword;
+  setRolePassword: typeof setRolePassword;
+  migrateQueue: typeof migrateQueue;
   checkAppRole: typeof checkAppRole;
+  checkWorkerRole: typeof checkWorkerRole;
+  checkDashboardRole: typeof checkDashboardRole;
   log: CommandLog;
 }): Promise<number> {
   const passwords: string[] = [];
   try {
     const env = deps.loadEnv();
-    passwords.push(new URL(env.databaseUrl).password, env.appRolePassword);
-    await deps.runMigrations({ connectionString: env.databaseUrl, log: deps.log.info });
-    await deps.setAppRolePassword(env.databaseUrl, env.appRolePassword);
-    deps.log.info({ event: "migrate", step: "app_role_password_set" });
-    await deps.checkAppRole(appRoleUrl(env));
+    passwords.push(
+      new URL(env.databaseUrl).password,
+      env.appRolePassword,
+      env.workerRolePassword,
+      env.dashboardRolePassword,
+    );
+    const roles: [ServiceRole, string][] = [
+      ["app", env.appRolePassword],
+      ["worker", env.workerRolePassword],
+      ["dashboard", env.dashboardRolePassword],
+    ];
+    await deps.runMigrations({
+      connectionString: env.databaseUrl,
+      log: deps.log.info,
+      afterDrizzle: async (client, logStep) => {
+        for (const [role, password] of roles) {
+          await deps.setRolePassword(env.databaseUrl, role, password);
+          logStep(`${role}_role_password_set`);
+        }
+        const queue = await deps.migrateQueue(client);
+        logStep("pgboss_installed", {
+          version: queue.version,
+          schema_created: queue.schemaCreated,
+          queues_created: queue.queuesCreated.length,
+        });
+      },
+    });
+    await deps.checkAppRole(roleUrl(env.databaseUrl, "app", env.appRolePassword));
     deps.log.info({ event: "migrate", step: "app_role_check_passed" });
+    await deps.checkWorkerRole(roleUrl(env.databaseUrl, "worker", env.workerRolePassword));
+    deps.log.info({ event: "migrate", step: "worker_role_check_passed" });
+    await deps.checkDashboardRole(roleUrl(env.databaseUrl, "dashboard", env.dashboardRolePassword));
+    deps.log.info({ event: "migrate", step: "dashboard_role_check_passed" });
     return 0;
   } catch (error) {
     const exitCode = exitCodeFor(error);
@@ -37,11 +69,11 @@ export async function runMigrateCommand(deps: {
   }
 }
 
-// The URL the server uses: same host, port and database as DATABASE_URL, user app.
-function appRoleUrl(env: Env): string {
-  const url = new URL(env.databaseUrl);
-  url.username = "app";
-  url.password = env.appRolePassword;
+// The URL the role's service uses: same host, port and database as DATABASE_URL.
+function roleUrl(databaseUrl: string, role: ServiceRole, password: string): string {
+  const url = new URL(databaseUrl);
+  url.username = role;
+  url.password = password;
   return url.toString();
 }
 
@@ -52,7 +84,7 @@ function exitCodeFor(error: unknown): number {
   return 1;
 }
 
-// Only name and message are logged, and both passwords are cut out of the message in case a
+// Only name and message are logged, and every password is cut out of the message in case a
 // driver error quotes a connection string.
 function describe(error: unknown, passwords: string[]): { name: string; message: string } {
   const name = error instanceof Error ? error.constructor.name : typeof error;

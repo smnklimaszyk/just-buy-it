@@ -1,0 +1,31 @@
+{
+  "id": "04-gaming-pc-rtx4090",
+  "group": "legitimate",
+  "segment": "pc_4090",
+  "listing": {
+    "title": "Gaming PC RTX 4090 Ryzen 7 7800X3D 32GB DDR5 2TB NVMe",
+    "condition": "Gebraucht",
+    "condition_description": "Gepflegt, Nichtraucherhaushalt.",
+    "price_eur": 1850,
+    "shipping_eur": 50,
+    "landed_eur": 1900,
+    "owner_max_eur": 1920,
+    "percent_of_max": 99,
+    "seller": { "feedback_score": 61, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 11,
+    "item_specifics": [
+      { "name": "Prozessor", "value": "AMD Ryzen 7 7800X3D" },
+      { "name": "GPU", "value": "NVIDIA GeForce RTX 4090" },
+      { "name": "Arbeitsspeichergröße", "value": "32 GB" },
+      { "name": "SSD-Festplattenkapazität", "value": "2 TB" },
+      { "name": "Betriebssystem", "value": "Windows 11 Home" }
+    ],
+    "image_count": 8,
+    "description": "Selbst gebauter Gaming-PC, ein Jahr alt. Komponenten: Ryzen 7 7800X3D, MSI RTX 4090 Gaming X Trio, 32 GB DDR5-6000, 2 TB NVMe, 1000 W Netzteil, Mainboard B650. Läuft leise und stabil, Benchmarks auf Anfrage. Abholung in Köln möglich oder Versand gut verpackt per Spedition.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["pass", "caution"] }
+}

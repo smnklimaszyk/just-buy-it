@@ -7,6 +7,11 @@
       "source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./queue": {
+      "source": "./src/queue/index.ts",
+      "types": "./dist/queue/index.d.ts",
+      "default": "./dist/queue/index.js"
     }
   },
   "scripts": {
@@ -17,8 +22,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ebay-sniper/domain": "workspace:*",
+    "@opentelemetry/api": "1.9.1",
     "drizzle-orm": "0.45.4",
-    "pg": "8.23.1"
+    "pg": "8.23.1",
+    "pg-boss": "12.38.0"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

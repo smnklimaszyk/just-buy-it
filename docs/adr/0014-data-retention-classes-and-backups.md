@@ -37,6 +37,13 @@ Rule 3 fires only for a feed whose active set fits in 2,000 items, never in slic
 - Every display of eBay content, emails included, shows an as-of time in Europe/Berlin (ADR 0008, 0022). The dashboard keeps old rows; after purge a row shows codes and the as-of time with a Refresh action (getItem, class `standard`, purpose `item_refresh`, the user's ID; ADR 0007).
 - Alert mail auto-deletes after 30 days (D-48). Fixtures are synthetic (ADR 0023). `docs/compliance/service-providers.md` (owner Simon, stub in Phase 0) lists each processor of eBay content: what it receives, how long it keeps it, contract terms, whether the 4.1 flow-down is in place.
 
+**MVP note (2026-10-21)**:
+
+- The MVP purge (`packages/db/src/purge.ts`, every 15 minutes in UTC) runs in the worker as role `worker` and touches only the worker's own tables and the `ebay_live` content. Content, `classifier_sample`, `ebay_live.screening_text` and `ebay_live.alert_message` go at expiry; `gone_at` is set by rule 2 (ended) and rule 5 (48 h backstop), and at enrich when getItem says not found or ended; listings with `gone_at` are deleted with their rows; price columns of `candidate` and `alert` become NULL at 30 days; rows past their lifetime are deleted: `seen_item` 90 d, `price_sample`, `poll_run` and `purge_run` 30 d, `candidate`, `screening`, `alert`, `alert_delivery` 180 d, `llm_usage_daily` 1 y. Deletes run in batches of 5,000 rows; each run writes a `purge_run` row with counts only.
+- Rules 3 and 4 (refresh runs, sweep misses) are not built; the backstop covers those rows.
+- New registry rows: `ebay_live.screening_text` and `ebay_live.alert_message` (class 1, content expiry); `app.price_sample` (class 2, 30 d, no item key, title or seller), `app.candidate` (class 2, 180 d, prices NULL at 30 d), `app.screening` (class 2, 180 d); `app.feed`, `app.segment_rule`, `app.screening_pause`, `app.smtp_pause`, `app.llm_usage_daily`, `app.purge_run`, `app.worker_status` (class 3).
+- Deferred to Phase 1 S2: retention of `deletion_event` (1 y), `deletion_result_hourly` (90 d), `ebay_quota_window` (90 d), `api_usage_hourly` (1 y) and `audit_event` (1 y). The worker has no `DELETE` right on them, and the oldest rows date from 2026-10-19, so none reaches its lifetime for months. That purge comes with a role that owns those tables; the MVP runbook has a reminder dated 2027-01-15.
+
 ## Alternatives considered
 
 - **Separate databases per class**: breaks the one-transaction decide step (ADR 0015).

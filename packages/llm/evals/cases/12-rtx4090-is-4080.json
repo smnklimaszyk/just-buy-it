@@ -1,0 +1,28 @@
+{
+  "id": "12-rtx4090-is-4080",
+  "group": "scam",
+  "segment": "gpu_4090",
+  "listing": {
+    "title": "RTX 4090 Gaming Grafikkarte 16GB",
+    "condition": "Gebraucht",
+    "condition_description": "Gut.",
+    "price_eur": 940,
+    "shipping_eur": 10,
+    "landed_eur": 950,
+    "owner_max_eur": 1280,
+    "percent_of_max": 74,
+    "seller": { "feedback_score": 54, "feedback_percent": 98.1, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 8,
+    "item_specifics": [
+      { "name": "Chipsatz/GPU-Modell", "value": "NVIDIA GeForce RTX 4080" },
+      { "name": "Speichergröße", "value": "16 GB" }
+    ],
+    "image_count": 4,
+    "description": "Verkaufe meine RTX 4080 mit 16 GB, weil ich auf eine größere Karte umgestiegen bin. Läuft einwandfrei in allen Spielen in 4K. Mit Originalkarton.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["caution", "block"], "must_flag": ["wrong_model", "description_contradicts_title"] }
+}

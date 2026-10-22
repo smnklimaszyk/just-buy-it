@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Checks the running eBay deal monitor on the host (MVP section 9.4). Run as root: live-check
+# Reads the .env only with grep, never by sourcing it, and prints no value from it except the
+# two Claude caps.
+set -euo pipefail
+
+root="${EBAY_DEPLOY_ROOT:-/opt/ebay-sniper}"
+failures=0
+
+# check <name> <detail shown on failure> <test command...>
+check() {
+  local name="$1" detail="$2"
+  shift 2
+  if "$@"; then
+    echo "ok   $name"
+  else
+    echo "FAIL $name: $detail"
+    failures=$((failures + 1))
+  fi
+}
+
+# The container ID of a running service of the ebay-sniper Compose project, empty when none runs.
+container() {
+  docker ps -q --filter label=com.docker.compose.project=ebay-sniper \
+    --filter "label=com.docker.compose.service=$1" 2>/dev/null | head -n 1 || true
+}
+
+# The last value of a name in the .env, empty when it is not set.
+env_value() {
+  grep -E "^$1=" "$root/.env" | tail -n 1 | cut -d= -f2- || true
+}
+
+[[ -r "$root/.env" ]] || {
+  echo "live-check: cannot read $root/.env, run as root" >&2
+  exit 2
+}
+sha="$(cat "$root/state/running" 2>/dev/null || true)"
+[[ "$sha" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "live-check: no running release in $root/state/running" >&2
+  exit 2
+}
+
+worker="$(container worker)"
+health="no worker container"
+if [[ -n "$worker" ]]; then
+  health="$(docker inspect --format '{{.State.Health.Status}}' "$worker" 2>/dev/null || echo unknown)"
+fi
+check "worker container is healthy" "got '$health'" [ "$health" = healthy ]
+
+# The dashboard listener is published on the host's loopback only.
+body="$(curl -fsS --max-time 5 http://127.0.0.1:3142/healthz 2>/dev/null || true)"
+check "dashboard /healthz reports $sha" "got '$body'" [ "$body" = "{\"sha\":\"$sha\"}" ]
+
+postgres="$(container postgres)"
+
+# One value from psql as the owner, over the Postgres container's local socket.
+sql() {
+  if [[ -z "$postgres" ]]; then
+    echo "no postgres container"
+    return
+  fi
+  docker exec "$postgres" psql -U ebay_sniper -d ebay_sniper -v ON_ERROR_STOP=1 -tA -c "$1" 2>/dev/null ||
+    echo "query failed"
+}
+
+value="$(sql "SELECT version FROM pgboss.version")"
+check "pgboss schema version is 46" "got '$value'" [ "$value" = 46 ]
+
+value="$(sql "SELECT count(*) FROM app.worker_status WHERE heartbeat_at > now() - interval '1 minute'")"
+check "worker heartbeat under 1 minute old" "got '$value' fresh worker_status rows" [ "$value" = 1 ]
+
+# The newest finished poll per enabled feed; a poll running right now does not count against it.
+value="$(sql "SELECT count(*) FROM app.feed f LEFT JOIN LATERAL (
+  SELECT r.status, r.started_at FROM app.poll_run r
+  WHERE r.feed_id = f.id AND r.kind = 'poll' AND r.status <> 'running'
+  ORDER BY r.started_at DESC LIMIT 1) last ON true
+  WHERE f.enabled AND (last.status IS DISTINCT FROM 'ok' OR last.started_at < now() - interval '15 minutes')")"
+check "last poll of every enabled feed is ok and under 15 minutes old" "got '$value' feed(s) behind" [ "$value" = 0 ]
+
+# A running row older than 5 minutes is stale (MVP section 2.3).
+value="$(sql "SELECT count(*) FROM app.poll_run WHERE status = 'running'
+  AND started_at < now() - interval '5 minutes' AND started_at > now() - interval '1 hour'")"
+check "no stale running poll_run row in the last hour" "got '$value' stale row(s)" [ "$value" = 0 ]
+
+# Content lives at most 6 h; the purge runs every 15 minutes.
+value="$(sql "SELECT count(*) FROM ebay_live.listing_content WHERE fetched_at < now() - interval '6 hours 15 minutes'")"
+check "no listing_content row older than 6 h 15 min" "got '$value' row(s)" [ "$value" = 0 ]
+
+value="$(sql "SELECT count(*) FROM app.alert_delivery WHERE status = 'sending' AND lease_until < now()")"
+check "no alert_delivery sending past its lease" "got '$value' delivery(s)" [ "$value" = 0 ]
+
+# The worker's defaults apply when the .env leaves the caps out.
+call_limit="$(env_value CLAUDE_DAILY_CALL_LIMIT)"
+call_limit="${call_limit:-40}"
+spend_limit="$(env_value CLAUDE_DAILY_SPEND_LIMIT_USD)"
+spend_limit="${spend_limit:-2}"
+if [[ "$call_limit" =~ ^[0-9]+$ && "$spend_limit" =~ ^[0-9]+(\.[0-9]{1,2})?$ ]]; then
+  value="$(sql "SELECT count(*) FROM app.llm_usage_daily
+    WHERE day_berlin = (now() AT TIME ZONE 'Europe/Berlin')::date
+    AND (calls > $call_limit OR spent_microusd + reserved_microusd > $spend_limit * 1000000)")"
+  check "Claude use today within $call_limit calls and USD $spend_limit" "got '$value' day(s) over a cap" [ "$value" = 0 ]
+else
+  check "Claude caps in $root/.env are numbers" "CLAUDE_DAILY_CALL_LIMIT or CLAUDE_DAILY_SPEND_LIMIT_USD is malformed" false
+fi
+
+if [[ $failures -gt 0 ]]; then
+  echo "$failures check(s) failed"
+  exit 1
+fi
+echo "all checks passed"

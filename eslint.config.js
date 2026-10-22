@@ -21,6 +21,18 @@ const ENV_READS = [
   },
 ];
 
+// ADR 0007: only packages/llm talks to Anthropic, so the API host appears nowhere else.
+const ANTHROPIC_HOST = [
+  {
+    selector: "Literal[value=/api\\.anthropic\\.com/]",
+    message: "only packages/llm calls the Anthropic API (ADR 0007)",
+  },
+  {
+    selector: "TemplateElement[value.raw=/api\\.anthropic\\.com/]",
+    message: "only packages/llm calls the Anthropic API (ADR 0007)",
+  },
+];
+
 const TESTS = ["**/*.test.ts"];
 
 export default tseslint.config(
@@ -41,9 +53,25 @@ export default tseslint.config(
     },
   },
   // A later config object replaces the options of no-restricted-syntax instead of merging them,
-  // so each glob below lists every selector that applies to it.
+  // so each glob below lists every selector that applies to it. This first one covers every file
+  // the later ones do not, tests and tools included.
+  {
+    files: ["**/*.{ts,js,cjs,mjs}"],
+    ignores: ["packages/llm/**"],
+    rules: {
+      "no-restricted-syntax": ["error", ...ANTHROPIC_HOST],
+    },
+  },
   {
     files: ["packages/*/src/**/*.ts"],
+    ignores: ["packages/llm/**", ...TESTS],
+    rules: {
+      "no-restricted-syntax": ["error", ...CLOCK_READS, ...ANTHROPIC_HOST],
+      "no-restricted-globals": ["error", { name: "process", message: "packages do not read process (ADR 0006)" }],
+    },
+  },
+  {
+    files: ["packages/llm/src/**/*.ts"],
     ignores: TESTS,
     rules: {
       "no-restricted-syntax": ["error", ...CLOCK_READS],
@@ -54,19 +82,19 @@ export default tseslint.config(
     files: ["apps/*/src/**/*.ts"],
     ignores: ["apps/*/src/clock.ts", "apps/*/src/env.ts", ...TESTS],
     rules: {
-      "no-restricted-syntax": ["error", ...CLOCK_READS, ...ENV_READS],
+      "no-restricted-syntax": ["error", ...CLOCK_READS, ...ENV_READS, ...ANTHROPIC_HOST],
     },
   },
   {
     files: ["apps/*/src/env.ts"],
     rules: {
-      "no-restricted-syntax": ["error", ...CLOCK_READS],
+      "no-restricted-syntax": ["error", ...CLOCK_READS, ...ANTHROPIC_HOST],
     },
   },
   {
     files: ["apps/*/src/clock.ts"],
     rules: {
-      "no-restricted-syntax": ["error", ...ENV_READS],
+      "no-restricted-syntax": ["error", ...ENV_READS, ...ANTHROPIC_HOST],
     },
   },
 );

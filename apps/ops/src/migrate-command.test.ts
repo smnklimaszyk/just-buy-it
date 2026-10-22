@@ -6,43 +6,83 @@ import {
   type checkAppRole,
   type MigrateLog,
   type runMigrations,
-  type setAppRolePassword,
 } from "@ebay-sniper/db";
+import {
+  QueueSchemaVersionError,
+  RoleCheckError,
+  type checkDashboardRole,
+  type checkWorkerRole,
+  type migrateQueue,
+  type setRolePassword,
+} from "@ebay-sniper/db/queue";
 import { EnvError } from "./env.js";
 import { runMigrateCommand } from "./migrate-command.js";
 
 const DATABASE_URL = "postgres://ebay_sniper:sentinel-password-4711@postgres:5432/ebay_sniper";
 const APP_PASSWORD = "5e171e1a".repeat(8);
-const APP_URL = `postgres://app:${APP_PASSWORD}@postgres:5432/ebay_sniper`;
+const WORKER_PASSWORD = "5e171e1b".repeat(8);
+const DASHBOARD_PASSWORD = "5e171e1c".repeat(8);
+const ENV = {
+  databaseUrl: DATABASE_URL,
+  appRolePassword: APP_PASSWORD,
+  workerRolePassword: WORKER_PASSWORD,
+  dashboardRolePassword: DASHBOARD_PASSWORD,
+};
 
 type LogEntry = Parameters<MigrateLog>[0];
+type MigrateClient = Parameters<NonNullable<Parameters<typeof runMigrations>[0]["afterDrizzle"]>>[0];
 
-function setup(
-  fakes: {
-    runMigrations?: typeof runMigrations;
-    setAppRolePassword?: typeof setAppRolePassword;
-    checkAppRole?: typeof checkAppRole;
-  } = {},
-) {
+// The runner's client as the fakes pass it along; nothing here queries it.
+const MIGRATE_CLIENT = { stands_in_for: "the migrate runner's client" } as unknown as MigrateClient;
+
+type Fakes = {
+  runMigrations?: typeof runMigrations;
+  setRolePassword?: typeof setRolePassword;
+  migrateQueue?: typeof migrateQueue;
+  checkAppRole?: typeof checkAppRole;
+  checkWorkerRole?: typeof checkWorkerRole;
+  checkDashboardRole?: typeof checkDashboardRole;
+};
+
+function setup(fakes: Fakes = {}) {
   const lines: LogEntry[] = [];
   const calls: string[] = [];
   const log = { info: (entry: LogEntry) => lines.push(entry), error: (entry: LogEntry) => lines.push(entry) };
-  const migrate = fakes.runMigrations ?? (async () => ({ drizzleApplied: 2, newerThanRelease: 0 }));
-  const setPassword = fakes.setAppRolePassword ?? (async () => undefined);
-  const check = fakes.checkAppRole ?? (async () => undefined);
+  // Like the real runner: the post-Drizzle step runs inside, with a step logger.
+  const migrate: typeof runMigrations =
+    fakes.runMigrations ??
+    (async (options) => {
+      options.log({ event: "migrate", step: "drizzle", applied: 2 });
+      await options.afterDrizzle?.(MIGRATE_CLIENT, (step, fields = {}) => options.log({ event: "migrate", step, ...fields }));
+      return { drizzleApplied: 2, newerThanRelease: 0 };
+    });
   const deps = {
-    loadEnv: () => ({ databaseUrl: DATABASE_URL, appRolePassword: APP_PASSWORD }),
+    loadEnv: () => ENV,
     runMigrations: vi.fn<typeof runMigrations>(async (options) => {
       calls.push("runMigrations");
       return migrate(options);
     }),
-    setAppRolePassword: vi.fn<typeof setAppRolePassword>(async (...args) => {
-      calls.push("setAppRolePassword");
-      return setPassword(...args);
+    setRolePassword: vi.fn<typeof setRolePassword>(async (url, role, password) => {
+      calls.push(`setRolePassword ${role}`);
+      return (fakes.setRolePassword ?? (async () => undefined))(url, role, password);
+    }),
+    migrateQueue: vi.fn<typeof migrateQueue>(async (client) => {
+      calls.push("migrateQueue");
+      return (fakes.migrateQueue ?? (async () => ({ schemaCreated: true, version: 46, queuesCreated: ["poll.dead", "poll"] })))(
+        client,
+      );
     }),
     checkAppRole: vi.fn<typeof checkAppRole>(async (url) => {
       calls.push("checkAppRole");
-      return check(url);
+      return (fakes.checkAppRole ?? (async () => undefined))(url);
+    }),
+    checkWorkerRole: vi.fn<typeof checkWorkerRole>(async (url) => {
+      calls.push("checkWorkerRole");
+      return (fakes.checkWorkerRole ?? (async () => undefined))(url);
+    }),
+    checkDashboardRole: vi.fn<typeof checkDashboardRole>(async (url) => {
+      calls.push("checkDashboardRole");
+      return (fakes.checkDashboardRole ?? (async () => undefined))(url);
     }),
     log,
   };
@@ -50,80 +90,136 @@ function setup(
 }
 
 describe("runMigrateCommand", () => {
-  it("migrates, sets the app role password, then checks the app role, and exits 0", async () => {
+  it("migrates, sets the three role passwords and installs pg-boss under the migrate lock, then checks each role", async () => {
     const { lines, calls, deps } = setup();
 
     const code = await runMigrateCommand(deps);
 
     expect(code).toBe(0);
-    expect(calls).toEqual(["runMigrations", "setAppRolePassword", "checkAppRole"]);
+    expect(calls).toEqual([
+      "runMigrations",
+      "setRolePassword app",
+      "setRolePassword worker",
+      "setRolePassword dashboard",
+      "migrateQueue",
+      "checkAppRole",
+      "checkWorkerRole",
+      "checkDashboardRole",
+    ]);
     expect(deps.runMigrations).toHaveBeenCalledWith(expect.objectContaining({ connectionString: DATABASE_URL }));
-    expect(deps.setAppRolePassword).toHaveBeenCalledWith(DATABASE_URL, APP_PASSWORD);
-    expect(deps.checkAppRole).toHaveBeenCalledWith(APP_URL);
-    expect(lines).toContainEqual({ event: "migrate", step: "app_role_password_set" });
-    expect(lines).toContainEqual({ event: "migrate", step: "app_role_check_passed" });
+    expect(deps.setRolePassword.mock.calls).toEqual([
+      [DATABASE_URL, "app", APP_PASSWORD],
+      [DATABASE_URL, "worker", WORKER_PASSWORD],
+      [DATABASE_URL, "dashboard", DASHBOARD_PASSWORD],
+    ]);
+    expect(deps.migrateQueue).toHaveBeenCalledWith(MIGRATE_CLIENT);
+    expect(deps.checkAppRole).toHaveBeenCalledWith(`postgres://app:${APP_PASSWORD}@postgres:5432/ebay_sniper`);
+    expect(deps.checkWorkerRole).toHaveBeenCalledWith(`postgres://worker:${WORKER_PASSWORD}@postgres:5432/ebay_sniper`);
+    expect(deps.checkDashboardRole).toHaveBeenCalledWith(
+      `postgres://dashboard:${DASHBOARD_PASSWORD}@postgres:5432/ebay_sniper`,
+    );
+    expect(lines.map((line) => line.step)).toEqual([
+      "drizzle",
+      "app_role_password_set",
+      "worker_role_password_set",
+      "dashboard_role_password_set",
+      "pgboss_installed",
+      "app_role_check_passed",
+      "worker_role_check_passed",
+      "dashboard_role_check_passed",
+    ]);
+    expect(lines).toContainEqual({ event: "migrate", step: "pgboss_installed", version: 46, schema_created: true, queues_created: 2 });
   });
 
-  it("checks the app role on the same host, port and database as DATABASE_URL", async () => {
+  it("checks each role on the same host, port and database as DATABASE_URL", async () => {
     const { deps } = setup();
-    deps.loadEnv = () => ({
-      databaseUrl: "postgresql://ebay_sniper:pw@db.internal:6543/other_db?sslmode=disable",
-      appRolePassword: APP_PASSWORD,
-    });
+    deps.loadEnv = () => ({ ...ENV, databaseUrl: "postgresql://ebay_sniper:pw@db.internal:6543/other_db?sslmode=disable" });
 
     expect(await runMigrateCommand(deps)).toBe(0);
-    const appUrl = new URL(String(deps.checkAppRole.mock.calls[0]?.[0]));
-    expect(appUrl.protocol).toBe("postgresql:");
-    expect(appUrl.username).toBe("app");
-    expect(appUrl.password).toBe(APP_PASSWORD);
-    expect(appUrl.host).toBe("db.internal:6543");
-    expect(appUrl.pathname).toBe("/other_db");
-    expect(appUrl.search).toBe("?sslmode=disable");
+    const urls = [deps.checkAppRole, deps.checkWorkerRole, deps.checkDashboardRole].map(
+      (check) => new URL(String(check.mock.calls[0]?.[0])),
+    );
+    expect(urls.map((url) => [url.username, url.password])).toEqual([
+      ["app", APP_PASSWORD],
+      ["worker", WORKER_PASSWORD],
+      ["dashboard", DASHBOARD_PASSWORD],
+    ]);
+    for (const url of urls) {
+      expect(url.protocol).toBe("postgresql:");
+      expect(url.host).toBe("db.internal:6543");
+      expect(url.pathname).toBe("/other_db");
+      expect(url.search).toBe("?sslmode=disable");
+    }
   });
 
-  it("exits 1 without the check when setting the app password fails", async () => {
+  it("exits 1 before pg-boss and the checks when setting a role password fails", async () => {
     const { lines, calls, deps } = setup({
-      setAppRolePassword: async () => {
-        throw new Error('role "app" does not exist');
+      setRolePassword: async (_url, role) => {
+        if (role === "worker") throw new Error('role "worker" does not exist');
       },
     });
 
     expect(await runMigrateCommand(deps)).toBe(1);
-    expect(calls).toEqual(["runMigrations", "setAppRolePassword"]);
+    expect(calls).toEqual(["runMigrations", "setRolePassword app", "setRolePassword worker"]);
     expect(lines).toContainEqual(expect.objectContaining({ step: "failed", exit_code: 1, err_name: "Error" }));
-    expect(lines).not.toContainEqual(expect.objectContaining({ step: "app_role_password_set" }));
+    expect(lines).not.toContainEqual(expect.objectContaining({ step: "worker_role_password_set" }));
   });
 
-  it("exits 1 with the failed step in the message when the app role check fails", async () => {
-    const { lines, deps } = setup({
-      checkAppRole: async () => {
-        throw new AppRoleCheckError("app role check failed at recordDeletionEvent insert: 42501");
+  it.each([
+    ["schema 45", new QueueSchemaVersionError("pg-boss schema 45 needs an upgrade path; not built in the MVP")],
+    ["schema 47", new QueueSchemaVersionError("pg-boss schema 47: database is newer than this release")],
+  ])("exits 1 without the role checks when the installed pg-boss is %s", async (_label, failure) => {
+    const { lines, calls, deps } = setup({
+      migrateQueue: async () => {
+        throw failure;
       },
     });
 
     expect(await runMigrateCommand(deps)).toBe(1);
+    expect(calls).not.toContain("checkAppRole");
     expect(lines).toContainEqual({
       event: "migrate",
       step: "failed",
       exit_code: 1,
-      err_name: "AppRoleCheckError",
-      err_message: "app role check failed at recordDeletionEvent insert: 42501",
+      err_name: "QueueSchemaVersionError",
+      err_message: failure.message,
     });
-    expect(lines).not.toContainEqual(expect.objectContaining({ step: "app_role_check_passed" }));
+  });
+
+  it.each([
+    ["checkAppRole", new AppRoleCheckError("app role check failed at recordDeletionEvent insert: 42501"), ["checkAppRole"]],
+    ["checkWorkerRole", new RoleCheckError("worker role check failed at pgboss.version: 42P01"), ["checkAppRole", "checkWorkerRole"]],
+    [
+      "checkDashboardRole",
+      new RoleCheckError("dashboard role check failed at insert app.feed: expected 42501, got success"),
+      ["checkAppRole", "checkWorkerRole", "checkDashboardRole"],
+    ],
+  ] as const)("exits 1 with the failed step in the message when %s fails", async (name, failure, checks) => {
+    const { lines, calls, deps } = setup({
+      [name]: async () => {
+        throw failure;
+      },
+    });
+
+    expect(await runMigrateCommand(deps)).toBe(1);
+    expect(calls.filter((call) => call.startsWith("check"))).toEqual(checks);
+    expect(lines).toContainEqual({
+      event: "migrate",
+      step: "failed",
+      exit_code: 1,
+      err_name: failure.constructor.name,
+      err_message: failure.message,
+    });
   });
 
   it("exits 2 without migrating when the environment is invalid", async () => {
-    const { lines, deps } = setup();
+    const { lines, calls, deps } = setup();
     deps.loadEnv = () => {
-      throw new EnvError("invalid environment: DATABASE_URL");
+      throw new EnvError("invalid environment: POSTGRES_WORKER_PASSWORD");
     };
 
-    const code = await runMigrateCommand(deps);
-
-    expect(code).toBe(2);
-    expect(deps.runMigrations).not.toHaveBeenCalled();
-    expect(deps.setAppRolePassword).not.toHaveBeenCalled();
-    expect(deps.checkAppRole).not.toHaveBeenCalled();
+    expect(await runMigrateCommand(deps)).toBe(2);
+    expect(calls).toEqual([]);
     expect(lines).toContainEqual(
       expect.objectContaining({ event: "migrate", step: "failed", exit_code: 2, err_name: "EnvError" }),
     );
@@ -140,15 +236,15 @@ describe("runMigrateCommand", () => {
     expect(calls).toEqual(["runMigrations"]);
   });
 
-  it("exits 3 without the check when the role lock stayed taken while setting the app password", async () => {
+  it("exits 3 without the checks when the role lock stayed taken while setting a password", async () => {
     const { calls, deps } = setup({
-      setAppRolePassword: async () => {
-        throw new MigrateLockTimeoutError("another run held the role lock for 120 attempts");
+      setRolePassword: async () => {
+        throw new MigrateLockTimeoutError("another session held the role lock for 120 attempts");
       },
     });
 
     expect(await runMigrateCommand(deps)).toBe(3);
-    expect(calls).toEqual(["runMigrations", "setAppRolePassword"]);
+    expect(calls).toEqual(["runMigrations", "setRolePassword app"]);
   });
 
   it.each([
@@ -182,13 +278,17 @@ describe("runMigrateCommand", () => {
   });
 
   it.each([
-    ["setAppRolePassword", { setAppRolePassword: async (url: string, pw: string) => Promise.reject(new Error(`${url} ${pw}`)) }],
+    ["setRolePassword", { setRolePassword: async (url: string, _role: string, pw: string) => Promise.reject(new Error(`${url} ${pw}`)) }],
     ["checkAppRole", { checkAppRole: async (url: string) => Promise.reject(new Error(`could not connect to ${url}`)) }],
-  ])("never logs either password when a %s error quotes them", async (_label, fakes) => {
+    ["checkWorkerRole", { checkWorkerRole: async (url: string) => Promise.reject(new Error(`could not connect to ${url}`)) }],
+    ["checkDashboardRole", { checkDashboardRole: async (url: string) => Promise.reject(new Error(`could not connect to ${url}`)) }],
+  ])("never logs a password when a %s error quotes it", async (_label, fakes) => {
     const { lines, deps } = setup(fakes);
 
     expect(await runMigrateCommand(deps)).toBe(1);
-    expect(JSON.stringify(lines)).not.toContain("sentinel-password-4711");
-    expect(JSON.stringify(lines)).not.toContain(APP_PASSWORD);
+    const logged = JSON.stringify(lines);
+    for (const secret of ["sentinel-password-4711", APP_PASSWORD, WORKER_PASSWORD, DASHBOARD_PASSWORD]) {
+      expect(logged).not.toContain(secret);
+    }
   });
 });

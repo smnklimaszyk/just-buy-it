@@ -1,15 +1,23 @@
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from "node:crypto";
 import pg from "pg";
+import { DASHBOARD_QUERIES } from "./dashboard.js";
 import { addHourlyCounts, recordDeletionEvent, recordProbeSeen } from "./deletion.js";
+import { PGBOSS_SCHEMA, PGBOSS_SCHEMA_VERSION } from "./queue/schema-version.js";
 import { withRoleLock } from "./role-lock.js";
 
-// Gives the role app LOGIN and the current password. Postgres stores a value that is already in
-// SCRAM-SHA-256 form as the verifier, so the plaintext never reaches Postgres: not its log, not
-// pg_stat_activity, not pg_stat_statements.
-export async function setAppRolePassword(
+// The roles the server, the worker and the dashboard connect as (section 2.5).
+export type ServiceRole = "app" | "worker" | "dashboard";
+
+type LockOptions = { lockAttempts?: number; lockRetryMs?: number };
+
+// Gives the role LOGIN and the current password, under the cluster-wide role lock. Postgres stores
+// a value that is already in SCRAM-SHA-256 form as the verifier, so the plaintext never reaches
+// Postgres: not its log, not pg_stat_activity, not pg_stat_statements.
+export async function setRolePassword(
   connectionString: string,
+  role: ServiceRole,
   password: string,
-  options: { lockAttempts?: number; lockRetryMs?: number } = {},
+  options: LockOptions = {},
 ): Promise<void> {
   const lock = { attempts: options.lockAttempts ?? 120, retryMs: options.lockRetryMs ?? 500 };
   await withRoleLock(connectionString, lock, async () => {
@@ -17,14 +25,26 @@ export async function setAppRolePassword(
     client.on("error", () => undefined);
     await client.connect();
     try {
-      await client.query(`ALTER ROLE app WITH LOGIN PASSWORD ${client.escapeLiteral(scramVerifier(password))}`);
+      await client.query(
+        `ALTER ROLE ${client.escapeIdentifier(role)} WITH LOGIN PASSWORD ${client.escapeLiteral(scramVerifier(password))}`,
+      );
     } finally {
       await client.end();
     }
   });
 }
 
-export class AppRoleCheckError extends Error {}
+export async function setAppRolePassword(
+  connectionString: string,
+  password: string,
+  options: LockOptions = {},
+): Promise<void> {
+  await setRolePassword(connectionString, "app", password, options);
+}
+
+export class RoleCheckError extends Error {}
+
+export class AppRoleCheckError extends RoleCheckError {}
 
 // Connects as app with the URL the server will use and runs the server's own writes inside a
 // transaction that is rolled back, so a wrong grant or password stops the deploy, not the server.
@@ -75,6 +95,111 @@ async function step<T>(name: string, fn: () => Promise<T>): Promise<T> {
   } catch (error) {
     throw new AppRoleCheckError(`app role check failed at ${name}: ${errorCode(error)}`);
   }
+}
+
+// Connects as worker with the URL the worker will use and runs one of each kind of statement the
+// worker needs in a transaction that is rolled back (section 2.5). Run after the pg-boss step.
+export async function checkWorkerRole(workerConnectionString: string): Promise<void> {
+  const check = roleStep("worker");
+  const client = new pg.Client({ connectionString: workerConnectionString, connectionTimeoutMillis: 10_000 });
+  client.on("error", () => undefined);
+  await check("connect", () => client.connect());
+  try {
+    await check("begin", () => client.query("BEGIN"));
+    await check("insert poll_run", () =>
+      client.query(
+        "INSERT INTO app.poll_run (feed_id, kind, baseline, started_at, status) VALUES ('gpu', 'poll', false, now(), 'running')",
+      ),
+    );
+    // min_left is the largest integer, more than any window holds, so the answer is pool and
+    // nothing is spent, whatever the window's limit.
+    const reserved = await check("reserve_ebay_call", async () => {
+      const result = await client.query<{ result: string }>(
+        "SELECT app.reserve_ebay_call('buy.browse', 'standard', 'role-check', 2147483647, now()) AS result",
+      );
+      return result.rows[0]?.result;
+    });
+    if (reserved !== "pool") throw new RoleCheckError(`worker role check failed at reserve_ebay_call: ${reserved}`);
+    const version = await check("pgboss.version", async () => {
+      const result = await client.query<{ version: number }>(`SELECT version FROM ${PGBOSS_SCHEMA}.version`);
+      return result.rows[0]?.version;
+    });
+    if (version !== PGBOSS_SCHEMA_VERSION) {
+      throw new RoleCheckError(`worker role check failed at pgboss.version: ${version}`);
+    }
+    const timeout = await check("statement_timeout", () => currentSetting(client, "statement_timeout"));
+    if (timeout !== "10s") throw new RoleCheckError(`worker role check failed at statement_timeout: ${timeout}`);
+  } finally {
+    // Nothing is kept. After a failed step that step's error is the one worth throwing.
+    await client.query("ROLLBACK").catch(() => undefined);
+    await client.end();
+  }
+}
+
+// Connects as dashboard with the URL the dashboard listener will use, runs every dashboard query
+// once and checks that a write and a read outside its grants are refused (section 2.5).
+export async function checkDashboardRole(dashboardConnectionString: string): Promise<void> {
+  const check = roleStep("dashboard");
+  const client = new pg.Client({ connectionString: dashboardConnectionString, connectionTimeoutMillis: 10_000 });
+  client.on("error", () => undefined);
+  await check("connect", () => client.connect());
+  try {
+    const timeout = await check("statement_timeout", () => currentSetting(client, "statement_timeout"));
+    if (timeout !== "2s") throw new RoleCheckError(`dashboard role check failed at statement_timeout: ${timeout}`);
+    await check("begin", () => client.query("BEGIN"));
+    const now = await check("now", async () => {
+      const result = await client.query<{ now: Date }>("SELECT now() AS now");
+      const [row] = result.rows;
+      if (row === undefined) throw new Error("SELECT returned no row");
+      return row.now;
+    });
+    for (const [name, query] of Object.entries(DASHBOARD_QUERIES)) {
+      await check(`query ${name}`, () => query(client, now));
+    }
+    await check("rollback", () => client.query("ROLLBACK"));
+    // READ WRITE, so the refusal comes from the grants and not from the read-only default.
+    await check("begin read write", () => client.query("BEGIN READ WRITE"));
+    await refused(
+      client,
+      "insert app.feed",
+      "INSERT INTO app.feed (id, category_id, q, price_ceiling_cents, condition_ids, day_interval_s, night_interval_s) VALUES ('gpu', '1', 'x', 1, '{}', 60, 60) ON CONFLICT DO NOTHING",
+    );
+    await refused(client, "select app.deletion_event", "SELECT 1 FROM app.deletion_event LIMIT 1");
+  } finally {
+    await client.query("ROLLBACK").catch(() => undefined);
+    await client.end();
+  }
+}
+
+// The statement must fail with insufficient_privilege. A savepoint keeps the transaction usable.
+async function refused(client: pg.Client, name: string, statement: string): Promise<void> {
+  await client.query("SAVEPOINT refused");
+  let outcome = "success";
+  try {
+    await client.query(statement);
+  } catch (error) {
+    outcome = errorCode(error);
+  }
+  await client.query("ROLLBACK TO SAVEPOINT refused");
+  if (outcome !== "42501") {
+    throw new RoleCheckError(`dashboard role check failed at ${name}: expected 42501, got ${outcome}`);
+  }
+}
+
+// The step names the failing check; the message carries the SQLSTATE only.
+function roleStep(role: ServiceRole): <T>(name: string, fn: () => Promise<T>) => Promise<T> {
+  return async (name, fn) => {
+    try {
+      return await fn();
+    } catch (error) {
+      throw new RoleCheckError(`${role} role check failed at ${name}: ${errorCode(error)}`);
+    }
+  };
+}
+
+async function currentSetting(client: pg.Client, name: string): Promise<string | undefined> {
+  const result = await client.query<{ value: string }>("SELECT current_setting($1) AS value", [name]);
+  return result.rows[0]?.value;
 }
 
 function errorCode(error: unknown): string {

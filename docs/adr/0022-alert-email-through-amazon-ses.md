@@ -28,6 +28,8 @@ All mail goes through Amazon SES in eu-central-1 (SESv2 `SendEmail`, `packages/n
 | Content | React Email plus plain text; content rules in ADR 0014, 0020, 0021, 0027 |
 | Bounce events | None in v1 |
 
+**MVP amendment (2026-10-21)**: for the MVP, alert email goes over SMTP from the existing mailbox, not through SES ([ADR 0035](0035-alert-email-over-smtp.md), owner decision). This record still holds for login codes (Phase 1 S3) and is the target for alert, digest and ops mail when SES is set up. MVP alert email is plain text plus simple escaped HTML from a pure render function (no React Email), one email per item, to the one alert address; the content rules above still apply. The mailbox should delete alert mail after 30 days (D-48).
+
 ## Alternatives considered
 
 - **Postmark, Resend**: US-hosted account data; second vendor and processor (Postmark approves faster).

@@ -24,6 +24,26 @@ describe("dependency-cruiser rules", () => {
     expect(await violatedRules("adapter-imports-adapter")).toEqual(["adapters-import-only-domain"]);
   });
 
+  it("reports the server importing the Claude adapter (ADR 0007)", async () => {
+    expect(await violatedRules("server-imports-llm")).toEqual(["server-no-llm"]);
+  });
+
+  it("reports the server importing the email adapter", async () => {
+    expect(await violatedRules("server-imports-notify")).toEqual(["server-no-notify"]);
+  });
+
+  it("reports pg-boss imported outside packages/db/src/queue, and only there", async () => {
+    expect(await violatedRules("pg-boss-outside-queue")).toEqual(["pg-boss-only-in-queue"]);
+  });
+
+  it("reports nodemailer imported outside packages/notify, and only there", async () => {
+    expect(await violatedRules("nodemailer-outside-notify")).toEqual(["nodemailer-only-in-notify"]);
+  });
+
+  it("reports domain source importing an npm package or a Node module", async () => {
+    expect(await violatedRules("domain-imports-runtime")).toEqual(["domain-no-runtime-deps", "domain-no-runtime-deps"]);
+  });
+
   it("reports nothing for an app importing an allowed package", async () => {
     expect(await violatedRules("clean")).toEqual([]);
   });

@@ -31,6 +31,14 @@ Every Claude call (triage, deep evaluation, the ADR 0020 single-image confirmati
 - `CLAUDE_SCREENING_APPROVED = false` in `packages/domain/src/compliance/claude-screening-approval.ts`. While false, production wires the rules-only evaluator; the kill switch row can only turn screening off.
 - Compliance documents in `docs/compliance/claude/`, each ending `Signed-off-by: <name>, <YYYY-MM-DD>` by Simon, never an agent: 01 Commercial Terms with DPA (dated copy), 02 transfer impact assessment, 03 legitimate interest (Art. 6(1)(f)), 04 Art. 30 record, 05 Art. 14 position (privacy page), 06 service-provider entry, 07 ZDR request date (go-live does not wait).
 
+**MVP amendment (2026-10-21), owner decision Q1**:
+
+- **Simon, the owner, decided on 2026-10-21 that Claude screening runs in the MVP before the compliance documents above (the D-18 pack) are signed, and accepted the risk of doing so.** His grounds: contact data is masked before anything is sent, and no seller username or ID, item ID, URL, image or buyer profile is sent. The pack is still required; it stays a Phase 3b item, and this decision does not replace it.
+- There is no `CLAUDE_SCREENING_APPROVED` constant in the MVP. Screening runs when `ANTHROPIC_API_KEY` is set and both daily caps are above 0 (ADR 0028 note); `CLAUDE_DAILY_CALL_LIMIT=0` and a worker restart turn it off.
+- What is sent, built by `packages/llm/src/request.ts`: segment and a one-line description, title, condition and condition description, prices and the owner's maximum, seller feedback score, positive percentage and account type, return terms, item country (no postal code or city), listing age, up to 30 item specifics, image count, the description and the rule flags and code signals. The description is stripped of `script`, `style`, `iframe` and `noscript` blocks and all tags, entities are decoded, zero-width and bidi characters removed, phone numbers, email addresses, IBANs and `wa.me`/`t.me` links masked as `[PHONE]`, `[EMAIL]`, `[IBAN]`, `[CONTACT_LINK]`, then cut to the first 4,500 and last 1,500 characters. The whole user message is at most 12,000 bytes. Names are not masked.
+- Text only, no images. Plain `fetch` in `packages/llm`, no `@anthropic-ai/sdk`; `inference_geo: "global"`; model `claude-sonnet-5-5`. The masked description as sent is kept in `ebay_live.listing_content.description_text` and deleted at content expiry; the model's reason in `ebay_live.screening_text`, deleted with the content.
+- Recommended to the owner, not built: an Anthropic Console workspace spend limit of USD 75 a month for this key, and a key rotation after the live acceptance.
+
 ## Alternatives considered
 
 - **Bedrock or Google Cloud EU now**: EU region for Sonnet 5.5 and Haiku 5.5 unverified; second cloud account.

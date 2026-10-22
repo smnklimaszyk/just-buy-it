@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildItemSummary, buildSearchPage } from "../testing/browse.js";
-import { itemSummarySchema, searchPageSchema } from "./schemas.js";
+import { buildItem, buildItemSummary, buildSearchPage } from "../testing/browse.js";
+import { itemSchema, itemSummarySchema, searchPageSchema } from "./schemas.js";
 
 describe("Browse schemas and the synthetic builders", () => {
   it("parse the builders' output without losing a declared field", () => {
@@ -16,5 +16,27 @@ describe("Browse schemas and the synthetic builders", () => {
 
     for (const id of ids) expect(id).toMatch(/^v1\|9000000000\d{2}\|0$/);
     expect(new Set(ids.slice(0, 99)).size).toBe(99);
+  });
+
+  it("parse the getItem builder's output without losing a declared field", () => {
+    const item = buildItem();
+
+    expect(itemSchema.parse(item)).toEqual(item);
+  });
+
+  it("drop seller.username, seller.userId, sellerLegalInfo and responsiblePersons from getItem (A23)", () => {
+    const item = buildItem();
+    const withIdentity = {
+      ...item,
+      seller: { ...(item.seller as object), username: "SENTINEL_SELLER_7f3a", userId: "SENTINEL_SELLER_7f3a" },
+      sellerLegalInfo: { legalContactFirstName: "SENTINEL_SELLER_7f3a", email: "sentinel@example.invalid" },
+      responsiblePersons: [{ companyName: "SENTINEL_SELLER_7f3a", email: "sentinel@example.invalid" }],
+      itemLocation: { country: "DE", postalCode: "SENTINEL_POSTAL", city: "SENTINEL_CITY" },
+    };
+
+    const parsed = itemSchema.parse(withIdentity);
+
+    expect(parsed).toEqual(item);
+    expect(JSON.stringify(parsed)).not.toMatch(/SENTINEL|sentinel/);
   });
 });

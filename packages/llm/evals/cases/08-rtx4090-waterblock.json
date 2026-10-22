@@ -1,0 +1,29 @@
+{
+  "id": "08-rtx4090-waterblock",
+  "group": "legitimate",
+  "segment": "gpu_4090",
+  "listing": {
+    "title": "RTX 4090 Founders Edition mit Wasserkühler EK, Grafikkarte",
+    "condition": "Gebraucht",
+    "condition_description": "Umgebaut auf Wasserkühlung, Originalkühler liegt bei.",
+    "price_eur": 1235,
+    "shipping_eur": 15,
+    "landed_eur": 1250,
+    "owner_max_eur": 1280,
+    "percent_of_max": 98,
+    "seller": { "feedback_score": 302, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 14,
+    "item_specifics": [
+      { "name": "Marke", "value": "NVIDIA" },
+      { "name": "Chipsatz/GPU-Modell", "value": "NVIDIA GeForce RTX 4090" },
+      { "name": "Kühlungskomponente", "value": "Wasserblock" }
+    ],
+    "image_count": 10,
+    "description": "Die Karte wurde vor einem Jahr auf einen EK-Wasserblock umgebaut. Den Umbau habe ich mit Fotos dokumentiert, die Garantiesiegel waren bei der Founders Edition kein Thema. Der originale Luftkühler mit allen Schrauben liegt bei und kann zurückgebaut werden. Temperaturen im Loop unter 50 Grad. Verkauft wird die Karte mit montiertem Block.",
+    "rule_flags": ["custom_cooling"],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["pass", "caution"] }
+}

@@ -57,6 +57,69 @@ describe("loggerOptions", () => {
   });
 });
 
+describe("loggerOptions Claude and SMTP secrets", () => {
+  it("redacts the x-api-key header on headers and nested headers", () => {
+    const logged = logOnce({
+      headers: { "x-api-key": "secret-key", accept: "application/json" },
+      req: { headers: { "x-api-key": "secret-key", accept: "application/json" } },
+    });
+
+    expect(logged).toMatchObject({
+      headers: { "x-api-key": "[redacted]", accept: "application/json" },
+      req: { headers: { "x-api-key": "[redacted]", accept: "application/json" } },
+    });
+    expect(JSON.stringify(logged)).not.toMatch(/secret-/);
+  });
+
+  it("redacts apiKey, pass, smtpPassword, SMTP_PASSWORD and ANTHROPIC_API_KEY at depths 0 to 2", () => {
+    const secrets = {
+      apiKey: "secret-api-key",
+      pass: "secret-pass",
+      smtpPassword: "secret-smtp-password",
+      SMTP_PASSWORD: "secret-smtp-env",
+      ANTHROPIC_API_KEY: "secret-anthropic-env",
+      host: "kept",
+    };
+    const hidden = {
+      apiKey: "[redacted]",
+      pass: "[redacted]",
+      smtpPassword: "[redacted]",
+      SMTP_PASSWORD: "[redacted]",
+      ANTHROPIC_API_KEY: "[redacted]",
+      host: "kept",
+    };
+
+    const logged = logOnce({ ...secrets, smtp: secrets, config: { auth: secrets } });
+
+    expect(logged).toMatchObject({ ...hidden, smtp: hidden, config: { auth: hidden } });
+    expect(JSON.stringify(logged)).not.toMatch(/secret-/);
+  });
+});
+
+describe("loggerOptions listing content", () => {
+  it("redacts title, description, itemWebUrl and seller at depths 0 to 2", () => {
+    const listing = {
+      title: "content-title",
+      description: "content-description",
+      itemWebUrl: "https://example.invalid/content-url",
+      seller: { username: "content-seller", feedbackScore: 5 },
+      segment: "gpu_3090",
+    };
+    const hidden = {
+      title: "[redacted]",
+      description: "[redacted]",
+      itemWebUrl: "[redacted]",
+      seller: "[redacted]",
+      segment: "gpu_3090",
+    };
+
+    const logged = logOnce({ ...listing, item: listing, job: { item: listing } });
+
+    expect(logged).toMatchObject({ ...hidden, item: hidden, job: { item: hidden } });
+    expect(JSON.stringify(logged)).not.toMatch(/content-/);
+  });
+});
+
 describe("loggerOptions user fields", () => {
   it("redacts data.username, data.userId and data.eiasToken at depths 0 to 2", () => {
     const user = { username: "secret-username", userId: "secret-user-id", eiasToken: "secret-eias-token", other: "kept" };
