@@ -358,6 +358,31 @@ importers:
         specifier: 5.0.4
         version: 5.0.4(@opentelemetry/api@1.9.1)(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15))
 
+  packages/kleinanzeigen:
+    dependencies:
+      imapflow:
+        specifier: 2.4.2
+        version: 2.4.2
+      parse5:
+        specifier: 8.0.1
+        version: 8.0.1
+      postal-mime:
+        specifier: 4.0.6
+        version: 4.0.6
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      tdd-guard-vitest:
+        specifier: 0.2.0
+        version: 0.2.0(supports-color@7.2.0)(vitest@5.0.4(@opentelemetry/api@1.9.1)(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)))
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 5.0.4
+        version: 5.0.4(@opentelemetry/api@1.9.1)(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15))
+
   packages/llm:
     dependencies:
       '@ebay-sniper/domain':
@@ -379,31 +404,6 @@ importers:
       vitest:
         specifier: 5.0.4
         version: 5.0.4(@opentelemetry/api@1.9.1)(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15))
-
-  packages/kleinanzeigen:
-    dependencies:
-      imapflow:
-        specifier: 2.4.2
-        version: 2.4.2
-      parse5:
-        specifier: 8.0.1
-        version: 8.0.1
-      postal-mime:
-        specifier: 4.0.6
-        version: 4.0.6
-    devDependencies:
-      '@types/node':
-        specifier: 24.19.2
-        version: 24.19.2
-      tdd-guard-vitest:
-        specifier: 0.2.0
-        version: 0.2.0(supports-color@7.2.0)(vitest@5.0.4(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15)))
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: 5.0.4
-        version: 5.0.4(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15))
 
   packages/logging:
     dependencies:
