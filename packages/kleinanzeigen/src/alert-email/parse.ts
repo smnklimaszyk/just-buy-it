@@ -12,8 +12,10 @@ export const MAX_LABEL_CHARS = 200;
 export const MAX_RAW_BYTES = 1_048_576;
 const MAX_MESSAGE_ID_CHARS = 300;
 
-// An alert is one HTML part; anything far beyond that is not one.
-const MIME_LIMITS = { maxNestingDepth: 8, maxPartCount: 32, maxHeadersSize: 65_536 };
+// An alert is one HTML part; anything far beyond that is not one. An attached message stays an
+// attachment: postal-mime would otherwise render it into the HTML, headers included, and nested ones
+// made a 570 KB message need more than the worker's 160 MB heap, before any check had run.
+const MIME_LIMITS = { maxNestingDepth: 8, maxPartCount: 32, maxHeadersSize: 65_536, maxRfc822NestingDepth: 0 };
 
 // expectedRecipient has no default: the caller passes the alert mailbox address. It stops a replay
 // of a genuine alert that Kleinanzeigen sent to someone else's account (its signed To is not ours).

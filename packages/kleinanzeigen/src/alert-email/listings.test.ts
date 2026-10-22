@@ -11,6 +11,12 @@ async function fixtureHtml(name: string): Promise<string> {
 
 const IMAGE = "https://img.kleinanzeigen.de/api/v1/prod-ads/images/00/00000000-0000-4000-8000-0000000000";
 
+function timed<T>(run: () => T): { result: T; ms: number } {
+  const started = performance.now();
+  const result = run();
+  return { result, ms: performance.now() - started };
+}
+
 describe("extractListings on the sanitized fixtures", () => {
   it("reads the negotiable GPU alert", async () => {
     expect(extractListings(await fixtureHtml("alert-gpu-negotiable.eml"))).toEqual({
@@ -149,6 +155,12 @@ describe("extractListings on synthetic alerts", () => {
     expect(result.ok && result.listings.map((l) => l.adId)).toEqual(["9000000011"]);
   });
 
+  it("reads a listing link in a form the URL parser accepts but that is not written the usual way", () => {
+    const adHref = " HTTPS://WWW.KLEINANZEIGEN.DE:443/s-anzeige/9000000011";
+    const result = extractListings(buildAlertHtml({ listings: [{ adId: "9000000011", adHref }] }));
+    expect(result.ok && result.listings.map((l) => l.adId)).toEqual(["9000000011"]);
+  });
+
   it("does not take links on http or on another host for listing links", () => {
     const listings = [
       { adHref: "http://www.kleinanzeigen.de/s-anzeige/9000000011" },
@@ -266,8 +278,103 @@ describe("extractListings on synthetic alerts", () => {
     expect(result.ok && result.listings.map((l) => [l.title, l.priceText])).toEqual([["RTX 4090 OVP", "1.650 €"]]);
   });
 
-  it("reads a listing inside 50,000 nested elements without overflowing the stack", () => {
-    const depth = 50_000;
+  it("rejects the markup that makes the HTML parser slow within a few seconds", () => {
+    // Without the limits, most of these keep parse5 busy for seconds: deep nesting, nesting the
+    // adoption agency builds by moving elements under new parents, long runs of children moved one by
+    // one by foster parenting and by the adoption agency, text inside a table that parse5 replays all
+    // at once, and single steps that scan a deep stack of open elements: the adoption agency's inner
+    // loop, rebuilding many formatting elements, stray end tags. The cap on open elements stops the
+    // deep ones at once and the cap on insertions the wide ones, so none needs the deadline.
+    const formatting = Array.from({ length: 1_500 }, (_, i) => `<b a=${i}>`).join("");
+    const fillers = [
+      "<div>".repeat(40_000),
+      "<ul><li>".repeat(25_000),
+      "<i><b><div></i>".repeat(30_000),
+      `${"<br>".repeat(150_000)}<table>${"<br>".repeat(150_000)}`,
+      `<b><p>${"<br>".repeat(300_000)}</b>`,
+      `<b>${"<span>".repeat(3_000)}<table>${"a\n".repeat(300_000)}<tr>`,
+      `<b>${"<i>".repeat(15_000)}<div>${"<i>".repeat(15_000)}</b>`,
+      `${"<q>".repeat(150_000)}${formatting}</q>x`,
+      `<svg>${"<g>".repeat(250_000)}${"</x>".repeat(250)}`,
+    ];
+    for (const filler of fillers) {
+      const html = buildAlertHtml().replace("<body", `<body>${filler}<div`);
+      const { result, ms } = timed(() => extractListings(html));
+      expect(ms).toBeLessThan(4_000);
+      expect(result).toEqual({ ok: false, reason: "malformed", detail: "html_too_complex" });
+    }
+  }, 30_000);
+
+  it("rejects a tag with tens of thousands of attributes once the parse deadline passes", () => {
+    // parse5 compares each attribute with the ones before it, inside the tokenizer, so only the
+    // deadline between pieces stops it.
+    const attributes = Array.from({ length: 60_000 }, (_, i) => `a${i}`).join(" ");
+    const html = buildAlertHtml().replace("<body", `<body><div ${attributes}></div><div`);
+    const { result, ms } = timed(() => extractListings(html));
+    expect(result).toEqual({ ok: false, reason: "malformed", detail: "html_too_complex" });
+    expect(ms).toBeLessThan(4_000);
+  }, 30_000);
+
+  it("skips a link whose host is a long run of combining marks without spending seconds on it", () => {
+    // The URL parser runs every host through IDNA, which is slow for such a run.
+    const marks = "\u{0334}\u{0301}\u{0300}".repeat(40_000);
+    const html = buildAlertHtml().replace("<body", `<body><a href="https://a${marks}/x">x</a><div`);
+    const { result, ms } = timed(() => extractListings(html));
+    expect(ms).toBeLessThan(1_000);
+    expect(result.ok && result.listings).toHaveLength(1);
+  });
+
+  it("rejects markup that makes the parser rebuild formatting elements into a huge tree", () => {
+    // Every <p> reopens all 240 <b>: 34 KB of input would become about a million elements.
+    const formatting = Array.from({ length: 240 }, (_, i) => `<b i=${i}>`).join("");
+    const html = buildAlertHtml().replace("<body", `<body><p>${formatting}</p>${"<p>x</p>".repeat(4_000)}<div`);
+    expect(extractListings(html)).toEqual({ ok: false, reason: "malformed", detail: "html_too_complex" });
+  });
+
+  it("reads a link once however often parse5 copies it", () => {
+    // An <a> left open is copied into every following <p>; each copy is a link event with the same
+    // href. Once before the saved-search link, once after the listing.
+    const copied = (href: string) => `<p><a href="${href}">x</p>${"<p>x</p>".repeat(7_000)}</a>`;
+    const query = "A".repeat(400_000);
+    const before = buildAlertHtml().replace(
+      "<body",
+      `<body>${copied(`https://www.kleinanzeigen.de/s-anzeige/123456?x=${query}`)}<div`,
+    );
+    const after = buildAlertHtml().replace("</body>", `${copied(`https://www.kleinanzeigen.de/p-x.html?x=${query}`)}</body>`);
+    for (const html of [before, after]) {
+      const { result, ms } = timed(() => extractListings(html));
+      expect(ms).toBeLessThan(1_000);
+      expect(result.ok && result.listings).toHaveLength(1);
+    }
+  });
+
+  it("rejects an element with hundreds of attributes", () => {
+    // Every copy parse5 makes of a formatting element shares its attributes, and reading a link
+    // looks through them; a real alert has at most 8 on one element.
+    const attributes = Array.from({ length: 300 }, (_, i) => `a${i}`).join(" ");
+    const html = buildAlertHtml().replace("<body", `<body><div ${attributes}></div><div`);
+    expect(extractListings(html)).toEqual({ ok: false, reason: "malformed", detail: "html_too_complex" });
+  });
+
+  it("rejects attributes piled onto <html> by repeated tags", () => {
+    // parse5 merges the attributes of every later <html> or <body> tag into the first one.
+    const tags = Array.from({ length: 3 }, (_, t) => `<html ${Array.from({ length: 40 }, (_, i) => `t${t}a${i}`).join(" ")}>`);
+    const html = buildAlertHtml().replace("<body", `${tags.join("")}<body`);
+    expect(extractListings(html)).toEqual({ ok: false, reason: "malformed", detail: "html_too_complex" });
+  });
+
+  it("rejects a listing nested 300 deep", () => {
+    // A real alert nests about 30 deep. Below the limit, every scan of the open elements stays short.
+    const titleHtml = `${"<span>".repeat(300)}RTX 4090 OVP${"</span>".repeat(300)}`;
+    expect(extractListings(buildAlertHtml({ listings: [{ titleHtml }] }))).toEqual({
+      ok: false,
+      reason: "malformed",
+      detail: "html_too_complex",
+    });
+  });
+
+  it("reads a listing nested 200 deep", () => {
+    const depth = 200;
     const titleHtml = `${"<span>".repeat(depth)}RTX 4090 OVP${"</span>".repeat(depth)}`;
     const result = extractListings(buildAlertHtml({ listings: [{ titleHtml }] }));
     expect(result.ok && result.listings[0]?.title).toBe("RTX 4090 OVP");
@@ -282,8 +389,12 @@ describe("extractListings on synthetic alerts", () => {
     vi.resetModules();
     vi.doMock("parse5", async (importOriginal) => ({
       ...(await importOriginal<typeof import("parse5")>()),
-      parse: () => {
-        throw new RangeError("parser crashed");
+      Parser: class {
+        tokenizer = {
+          write: () => {
+            throw new RangeError("parser crashed");
+          },
+        };
       },
     }));
     try {
