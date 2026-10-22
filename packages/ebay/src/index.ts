@@ -11,4 +11,12 @@ export {
   type EbayCallReservation,
   type ReserveEbayCall,
 } from "./browse/search.js";
-export type { EbayErrorDetail, ItemSummary } from "./browse/schemas.js";
+export { createItemClient, type GetItemRequest, type GetItemResult } from "./browse/get-item.js";
+export {
+  buildFeedSearch,
+  endUserContext,
+  FEED_PAGE_LIMIT,
+  MAX_Q_LENGTH,
+  type FeedSearchInput,
+} from "./browse/query.js";
+export type { EbayErrorDetail, Item, ItemSummary } from "./browse/schemas.js";

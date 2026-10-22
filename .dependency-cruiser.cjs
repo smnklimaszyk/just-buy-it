@@ -27,11 +27,47 @@ module.exports = {
       to: { path: WORKSPACE, pathNot: "^packages/$1/" },
     },
     {
+      name: "domain-no-runtime-deps",
+      comment: "domain is pure: no npm package and no Node module outside its tests.",
+      severity: "error",
+      from: { path: "^packages/domain/src/", pathNot: "\\.(test|spec)\\.[cm]?[jt]sx?$" },
+      to: { pathNot: "^(apps|packages)/" },
+    },
+    {
       name: "adapters-import-only-domain",
       comment: "ebay, llm, notify and db import only domain.",
       severity: "error",
       from: { path: "^packages/(ebay|llm|notify|db)/" },
       to: { path: WORKSPACE, pathNot: "^packages/($1|domain)/" },
+    },
+    {
+      name: "server-no-llm",
+      comment: "The server never calls Anthropic (ADR 0007): only the worker imports the Claude adapter.",
+      severity: "error",
+      from: { path: "^apps/server/" },
+      to: { path: "^packages/llm/" },
+    },
+    {
+      name: "server-no-notify",
+      comment: "The server sends no alert email: only the worker imports the email adapter.",
+      severity: "error",
+      from: { path: "^apps/server/" },
+      to: { path: "^packages/notify/" },
+    },
+    {
+      name: "pg-boss-only-in-queue",
+      comment: "pg-boss is used only through packages/db/src/queue (MVP section 2.2).",
+      severity: "error",
+      from: { pathNot: "^packages/db/src/queue/" },
+      // A resolved import lands in node_modules; one that cannot be resolved keeps its bare name.
+      to: { path: "(^|/)node_modules/pg-boss/|^pg-boss$" },
+    },
+    {
+      name: "nodemailer-only-in-notify",
+      comment: "nodemailer is used only through packages/notify (ADR 0035).",
+      severity: "error",
+      from: { pathNot: "^packages/notify/" },
+      to: { path: "(^|/)node_modules/nodemailer/|^nodemailer$" },
     },
     {
       name: "web-imports-only-contracts",

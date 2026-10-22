@@ -29,6 +29,27 @@
       "when": 1792498686455,
       "tag": "0003_app_role",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792570842187,
+      "tag": "0004_listing_pipeline",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792571045003,
+      "tag": "0005_worker_and_dashboard_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792571124761,
+      "tag": "0006_seed_feeds_rules",
+      "breakpoints": true
     }
   ]
 }

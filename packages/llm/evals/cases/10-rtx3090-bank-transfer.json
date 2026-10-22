@@ -1,0 +1,28 @@
+{
+  "id": "10-rtx3090-bank-transfer",
+  "group": "scam",
+  "segment": "gpu_3090",
+  "listing": {
+    "title": "MSI RTX 3090 Suprim X 24GB",
+    "condition": "Gebraucht",
+    "condition_description": "Sehr guter Zustand.",
+    "price_eur": 420,
+    "shipping_eur": 0,
+    "landed_eur": 420,
+    "owner_max_eur": 520,
+    "percent_of_max": 81,
+    "seller": { "feedback_score": 6, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 3,
+    "item_specifics": [
+      { "name": "Marke", "value": "MSI" },
+      { "name": "Chipsatz/GPU-Modell", "value": "NVIDIA GeForce RTX 3090" }
+    ],
+    "image_count": 4,
+    "description": "Top Karte, läuft ohne Probleme. Bezahlung nur per Überweisung an [IBAN], kein PayPal. Nach Zahlungseingang versende ich am selben Tag.",
+    "rule_flags": ["low_feedback"],
+    "code_signals": ["iban_present", "payment_mention"]
+  },
+  "expected": { "verdict_in": ["block"], "must_flag": ["off_ebay_payment"] }
+}

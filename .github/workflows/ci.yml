@@ -73,8 +73,44 @@ jobs:
       # --affected does not map infra/host/ to a package, so the deploy script tests always run.
       - name: Shell scripts
         run: |
-          shellcheck infra/host/ebay-deploy infra/host/smoke packages/ebay/scripts/fetch-openapi.sh
+          shellcheck infra/host/ebay-deploy infra/host/smoke infra/host/live-check packages/ebay/scripts/fetch-openapi.sh
           pnpm turbo run test --filter=@ebay-sniper/deploy-selftest
+
+      # Renders the compose file with a test .env. ALERT_FROM is unquoted with a display name, as on
+      # the host; Compose must pass it to the worker whole. Fixed test values, not secrets.
+      - name: Compose config
+        run: |
+          env_file="$RUNNER_TEMP/compose-test.env"
+          cat >"$env_file" <<'EOF'
+          EBAY_ENVIRONMENT=production
+          EBAY_DELETION_ENDPOINT_URL=https://deals.example.test/ebay/account-deletion
+          EBAY_DELETION_VERIFICATION_TOKEN=ci-test-token-0123456789abcdef0123456789
+          EBAY_CLIENT_ID=ci-test-client-id
+          EBAY_CLIENT_SECRET=ci-test-client-secret
+          POSTGRES_PASSWORD=00
+          POSTGRES_APP_PASSWORD=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          DELETION_PROBE_CODE=Ab0_-Ab0_-Ab0_-Ab0_-Ab0_-Ab0_-Ab0_-Ab0_-
+          POSTGRES_WORKER_PASSWORD=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+          POSTGRES_DASHBOARD_PASSWORD=00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+          ITEM_KEY_V1=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+          SMTP_HOST=mail.example.test
+          SMTP_PORT=587
+          SMTP_USER=info@example.test
+          SMTP_PASSWORD=ci-test-smtp-password
+          ALERT_FROM=Just-Buy-It <info@intra-ai.de>
+          ALERT_TO=info@example.test
+          EOF
+          rendered="$(docker compose -p ebay-sniper --env-file "$env_file" -f infra/docker-compose.yml \
+            --profile migrate config --format json)"
+          from="$(jq -r '.services.worker.environment.ALERT_FROM' <<<"$rendered")"
+          test "$from" = "Just-Buy-It <info@intra-ai.de>" || {
+            echo "the worker's ALERT_FROM rendered as '$from'" >&2
+            exit 1
+          }
+          jq -e '.services.migrate.environment | has("POSTGRES_WORKER_PASSWORD") and has("POSTGRES_DASHBOARD_PASSWORD")' \
+            <<<"$rendered" >/dev/null
+        env:
+          GIT_SHA: 0123456789abcdef0123456789abcdef01234567
 
       - name: Image build
         if: github.event_name == 'push'
@@ -83,23 +119,36 @@ jobs:
           GIT_SHA: ${{ github.sha }}
 
       # Runs the image's migrate command twice against the service database: the first run applies
-      # every migration, the second applies none. Catches an image without packages/db/migrations.
-      # Each run also sets the app role password and runs the app role check; the second run proves
-      # the check passes on a database that is already migrated.
+      # every migration and installs the pg-boss schema, the second applies none. Catches an image
+      # without packages/db/migrations. Each run also sets the app, worker and dashboard role
+      # passwords and runs their checks; the second run proves the checks pass on a database that is
+      # already migrated.
       - name: Image migrate
         if: github.event_name == 'push'
         run: |
           for run in first second; do
             echo "migrate, $run run"
             docker run --rm --network host -e DATABASE_URL="$TEST_DATABASE_URL" \
-              -e POSTGRES_APP_PASSWORD="$POSTGRES_APP_PASSWORD" -w /app/apps/ops \
+              -e POSTGRES_APP_PASSWORD="$POSTGRES_APP_PASSWORD" \
+              -e POSTGRES_WORKER_PASSWORD="$POSTGRES_WORKER_PASSWORD" \
+              -e POSTGRES_DASHBOARD_PASSWORD="$POSTGRES_DASHBOARD_PASSWORD" -w /app/apps/ops \
               ebay-sniper-server:ci node dist/main.js migrate
           done
-          docker run --rm --entrypoint sh ebay-sniper-server:ci -c \
-            'test ! -e /app/packages/db/dist/testing && test ! -e /app/packages/ebay/dist/testing'
+          version="$(docker run --rm --network host "$POSTGRES_IMAGE" \
+            psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -tAc 'SELECT version FROM pgboss.version')"
+          test "$version" = 46 || { echo "pgboss.version is '$version', expected 46" >&2; exit 1; }
+          docker run --rm --entrypoint sh ebay-sniper-server:ci -c '
+            for dir in packages/db packages/ebay packages/domain packages/llm packages/notify apps/worker; do
+              test ! -e "/app/$dir/dist/testing" || { echo "$dir/dist/testing ships in the image" >&2; exit 1; }
+            done
+            test ! -e /app/packages/llm/evals || { echo "packages/llm/evals ships in the image" >&2; exit 1; }'
         env:
-          # A fixed test value for the throwaway service database, not a secret.
+          # Fixed test values for the throwaway service database, not secrets.
           POSTGRES_APP_PASSWORD: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          POSTGRES_WORKER_PASSWORD: fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+          POSTGRES_DASHBOARD_PASSWORD: 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+          # The service container's image, so psql matches the server.
+          POSTGRES_IMAGE: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
 
   zizmor:
     runs-on: ubuntu-latest

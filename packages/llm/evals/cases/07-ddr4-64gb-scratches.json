@@ -1,0 +1,30 @@
+{
+  "id": "07-ddr4-64gb-scratches",
+  "group": "legitimate",
+  "segment": "ram_ddr4",
+  "listing": {
+    "title": "Corsair Vengeance LPX 64GB (4x16GB) DDR4-3200 Desktop RAM",
+    "condition": "Gebraucht",
+    "condition_description": "Kleine Kratzer am Heatspreader.",
+    "price_eur": 145,
+    "shipping_eur": 5,
+    "landed_eur": 150,
+    "owner_max_eur": 204.8,
+    "percent_of_max": 73,
+    "seller": { "feedback_score": 512, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": true, "period_days": 14 },
+    "item_location_country": "DE",
+    "listing_age_hours": 1,
+    "item_specifics": [
+      { "name": "Kapazität", "value": "64 GB" },
+      { "name": "Speichertyp", "value": "DDR4 SDRAM" },
+      { "name": "Formfaktor", "value": "DIMM" },
+      { "name": "Anzahl der Module", "value": "4" }
+    ],
+    "image_count": 5,
+    "description": "Vier Riegel à 16 GB, zusammen gekauft und immer im Quad-Betrieb gelaufen (XMP 3200 MHz, Intel Z490). Funktionieren einwandfrei. An zwei Heatspreadern sind kleine Kratzer vom Ausbau, siehe Fotos. Nicht ECC, normale Desktop-Module.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["pass"] }
+}

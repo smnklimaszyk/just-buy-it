@@ -29,6 +29,12 @@ A pure `decideRisk()` in `packages/domain` computes the verdict from code signal
 | Seller trust | Thin reputation, `seller_account_type`, returns rules (ADR 0027), `seller_repeat`: on or off by rubric config. `flagSellerRepeats()` in the poll run matches title and price per seller, key in memory only, sets a listing-row boolean (never reset, deleted with the listing); High. Misses repeats across polls and feeds. `buyer_profile` never changes the verdict; private-seller premium is in the tier function (ADR 0017). |
 | Code location | Only `packages/ebay/src/description/parse.ts` imports parse5, pinned 8.0.1, after a supply-chain review. Domain logic in `packages/domain/src/risk/`. |
 
+**MVP amendment (2026-10-21), owner decision Q7**:
+
+- No `decideRisk()` with families and verified quotes yet. `packages/domain/src/screening/verdict.ts` takes the worse of the model verdict and the code floors; code never lowers a model verdict. No parse5, no look-alike folding.
+- Code floors from a scan of the raw title and description, before masking. Scam floors, which give `block` with `blocked_by_code = true`: an IBAN with a valid ISO 13616 check sum, and an off-eBay payment phrase (for example `paypal freunde`, `friends and family`, `western union`, `vorkasse per überweisung`, `nicht über ebay`). Caution floors: `überweisung` or `vorkasse` alone, contact data with an invitation to make contact off eBay, hidden characters, and phrases addressed to a reviewer or an AI. Model `product_match = mismatch` gives at least caution; a failed or skipped screening gives caution with `screened = false`.
+- **Routing:** a `block` from the model alone is still emailed, with the subject and body marked "Claude says block" and the model's reason. The email is suppressed only when a code scam floor fired; such an alert is shown on the dashboard's Blocked page with its signal codes. Pass and caution are emailed; caution with a warning box.
+
 ## Alternatives considered
 
 Rejected: no caps (over-blocks private sellers); positive offsets (seller text lowers score); exact matching only (fails adversarial text, no images); model detects injection (judges itself); every marker High (soft hyphen plus a High blocks); full CSS cascade (big dependency); image criticals capped at CAUTION (red flags get ignored; fallback if evals show no gain); yes/no confirmation (leading).

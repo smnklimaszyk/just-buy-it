@@ -15,6 +15,15 @@ const envSchema = z.object({
   GIT_SHA: z.string().regex(/^[0-9a-f]{40}$/),
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
   DELETION_PROBE_CODE: z.string().regex(/^[A-Za-z0-9_-]{40}$/),
+  // The internal dashboard's own listener and its read-only database role (section 8.1).
+  DASHBOARD_PORT: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.coerce.number().int().min(1).max(65_535).default(3001),
+  ),
+  DASHBOARD_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+}).refine((env) => env.DASHBOARD_PORT !== env.PORT, {
+  path: ["DASHBOARD_PORT"],
+  message: "the dashboard needs its own port",
 });
 
 export type Env = {
@@ -27,12 +36,14 @@ export type Env = {
   gitSha: string;
   databaseUrl: string;
   deletionProbeCode: string;
+  dashboardPort: number;
+  dashboardDatabaseUrl: string;
 };
 
 export class EnvError extends Error {}
 
 // The message names the failing variables only: a ZodError message can quote a value, and
-// DATABASE_URL and the deletion token are secrets.
+// DATABASE_URL, DASHBOARD_DATABASE_URL and the deletion token are secrets.
 export function parseEnv(source: Record<string, string | undefined>): Env {
   const parsed = envSchema.safeParse(source);
   if (!parsed.success) {
@@ -50,6 +61,8 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
     gitSha: env.GIT_SHA,
     databaseUrl: env.DATABASE_URL,
     deletionProbeCode: env.DELETION_PROBE_CODE,
+    dashboardPort: env.DASHBOARD_PORT,
+    dashboardDatabaseUrl: env.DASHBOARD_DATABASE_URL,
   };
 }
 

@@ -27,6 +27,14 @@ Tool-less calls in three stages, a strict schema checked by Zod 4. Listing-cause
 | Queues | Concurrency 1; priority No-brainer, Good, Unrated under maximum, Fair, then discount. Max 10 deep per feed per hour; No-brainers exempt but counted; over 10 No-brainers per feed per hour sends an ops email. Breaker closed with lane budget: a No-brainer waits at most for one in-flight deep call. Lane spent: all go to the degraded digest |
 | Expiry | Content expires before stage timeout: no call, `not_screened_expired`, digest entry (segment, landed price, tier, link, no listing text), skipped if already in the degraded digest. Ops email if a No-brainer or Good expires, over 5 expire a day, or oldest deep job passes 2 hours |
 
+**MVP note (2026-10-21)**:
+
+- One stage, no triage, deep or confirm: `claude-sonnet-5-5`, effort `medium`, adaptive thinking, `max_tokens` 3,000, structured output (`verdict`, `product_match`, `risk_flags`, `reason`), no tools, no `fallbacks`, timeout 60 s. Constants in `packages/llm/src/screening-config.v1.ts`, hashed into `prompt_version` (`screen-v1:` plus 12 hex).
+- At most two paid attempts per claim key (item key, prompt version), crashes included. `timeout`, `provider_unavailable`, `rate_limited` and `schema_invalid` are retried once, 30 s later; `truncated`, `refused`, `request_rejected`, `auth_failed`, `unexpected_model` never. There is no larger retry on `truncated`: `max_tokens` is the cost bound.
+- A failed or skipped screening (caps reached, not configured, paused) still sends the alert email, labelled "Not screened by Claude: <code>" and treated as caution. There is no digest and no review queue.
+- No breaker except for `auth_failed`, which pauses screening for 15 minutes for all listings (`app.screening_pause`). Other global errors fail that listing to "not screened".
+- No other model answers in place of the configured one, as above.
+
 ## Alternatives considered
 
 - Deep evaluation for all: $99-254 a month against $10-25 with triage.

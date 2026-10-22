@@ -1,0 +1,25 @@
+{
+  "id": "16-rtx4090-thin-seller-stock-photo",
+  "group": "scam",
+  "segment": "gpu_4090",
+  "listing": {
+    "title": "RTX 4090 24GB",
+    "condition": "Gebraucht",
+    "condition_description": null,
+    "price_eur": 704,
+    "shipping_eur": 0,
+    "landed_eur": 704,
+    "owner_max_eur": 1280,
+    "percent_of_max": 55,
+    "seller": { "feedback_score": 3, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 1,
+    "item_specifics": [],
+    "image_count": 1,
+    "description": "Gute Karte. Funktioniert. Bild ist ein Beispielbild vom Hersteller. Schneller Versand.",
+    "rule_flags": ["low_feedback"],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["caution", "block"] }
+}

@@ -15,6 +15,10 @@ export class MigrationHistoryError extends Error {}
 
 export type MigrateLog = (entry: { event: "migrate"; step: string; [key: string]: unknown }) => void;
 export type MigrateResult = { drizzleApplied: number; newerThanRelease: number };
+export type MigrateLogStep = (step: string, fields?: Record<string, unknown>) => void;
+// Runs after the Drizzle step on the runner's client, still under the migrate lock and outside
+// the role lock (ops migrate: role passwords, then the pg-boss schema and queues, section 2.2).
+export type AfterDrizzle = (client: pg.Client, logStep: MigrateLogStep) => Promise<void>;
 
 const ROLE_LOCK_ATTEMPTS = 120;
 
@@ -26,6 +30,7 @@ export async function runMigrations(options: {
   migrationsFolder?: string;
   lockAttempts?: number;
   lockRetryMs?: number;
+  afterDrizzle?: AfterDrizzle;
 }): Promise<MigrateResult> {
   const migrationsFolder = options.migrationsFolder ?? DEFAULT_MIGRATIONS_FOLDER;
   const lockAttempts = options.lockAttempts ?? 120;
@@ -79,6 +84,7 @@ export async function runMigrations(options: {
         },
       );
       logStep("drizzle", { applied: drizzleApplied });
+      if (options.afterDrizzle !== undefined) await options.afterDrizzle(client, logStep);
       options.log({
         event: "migrate",
         step: "done",

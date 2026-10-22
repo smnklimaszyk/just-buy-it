@@ -66,6 +66,26 @@ describe("createPool", () => {
     }
   });
 
+  it("takes a statement timeout and sets the client query timeout 1 s above it (worker pool)", async () => {
+    const pool = createPool({
+      connectionString: database.url,
+      max: 1,
+      applicationName: "pool-test",
+      statementTimeoutMs: 10_000,
+      onError: () => undefined,
+    });
+    try {
+      const result = await pool.query<{ statement_timeout: string }>(
+        "SELECT current_setting('statement_timeout') AS statement_timeout",
+      );
+
+      expect(result.rows[0]?.statement_timeout).toBe("10s");
+      expect(pool.options).toMatchObject({ statement_timeout: 10_000, query_timeout: 11_000 });
+    } finally {
+      await pool.end();
+    }
+  });
+
   it("rejects a query within 4 s when the server accepts TCP and never answers (A4)", { timeout: 10_000 }, async () => {
     const server = await silentServer();
     const pool = createPool({ connectionString: server.url, max: 1, applicationName: "pool-test", onError: () => undefined });

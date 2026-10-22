@@ -24,9 +24,15 @@ services:
       DELETION_PROBE_CODE: ${DELETION_PROBE_CODE:?DELETION_PROBE_CODE is required}
       # The app role: SELECT, INSERT and UPDATE on the deletion tables only, not the superuser.
       DATABASE_URL: postgres://app:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@postgres:5432/ebay_sniper
+      # The internal dashboard listener (MVP section 8), read-only through the dashboard role.
+      DASHBOARD_PORT: "3001"
+      DASHBOARD_DATABASE_URL: postgres://dashboard:${POSTGRES_DASHBOARD_PASSWORD:?POSTGRES_DASHBOARD_PASSWORD is required}@postgres:5432/ebay_sniper
     # No depends_on: the deletion endpoint must answer while Postgres is down (A4).
+    # 3142 is the dashboard: on the host 127.0.0.1 only and never in the Traefik route; reach it
+    # over an SSH tunnel.
     ports:
       - "127.0.0.1:3140:3000"
+      - "127.0.0.1:3142:3001"
     read_only: true
     tmpfs:
       - /tmp
@@ -35,6 +41,68 @@ services:
     security_opt:
       - no-new-privileges:true
     mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  # Polls eBay, screens with Claude and sends alert email (MVP section 2.6). Same image as the server.
+  worker:
+    image: ebay-sniper-server:${GIT_SHA:?GIT_SHA is required}
+    working_dir: /app/apps/worker
+    command: ["node", "dist/main.js"]
+    # An explicit list, like the server: never the whole .env.
+    environment:
+      TZ: UTC
+      # The worker role: its own tables, reserve_ebay_call and the pgboss schema, nothing else.
+      DATABASE_URL: postgres://worker:${POSTGRES_WORKER_PASSWORD:?POSTGRES_WORKER_PASSWORD is required}@postgres:5432/ebay_sniper
+      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-}
+      EBAY_ENVIRONMENT: ${EBAY_ENVIRONMENT:?EBAY_ENVIRONMENT is required}
+      EBAY_CLIENT_ID: ${EBAY_CLIENT_ID:?EBAY_CLIENT_ID is required}
+      EBAY_CLIENT_SECRET: ${EBAY_CLIENT_SECRET:?EBAY_CLIENT_SECRET is required}
+      EBAY_ENDUSERCTX_POSTAL_CODE: ${EBAY_ENDUSERCTX_POSTAL_CODE:-}
+      ITEM_KEY_V1: ${ITEM_KEY_V1:?ITEM_KEY_V1 is required}
+      BUYER_PROFILE: ${BUYER_PROFILE:-}
+      # Unset: screening is skipped and alerts say "Not screened by Claude: not_configured".
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-}
+      CLAUDE_DAILY_CALL_LIMIT: ${CLAUDE_DAILY_CALL_LIMIT:-}
+      CLAUDE_DAILY_SPEND_LIMIT_USD: ${CLAUDE_DAILY_SPEND_LIMIT_USD:-}
+      # All five or none; unset, alerts stay pending with hold reason smtp_not_configured.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      ALERT_FROM: ${ALERT_FROM:-}
+      ALERT_TO: ${ALERT_TO:?ALERT_TO is required}
+      LOG_LEVEL: ${LOG_LEVEL:-}
+      # Node's default heap limit (about 270 MB) is above mem_limit, so V8 would not collect harder
+      # before the kernel kills the container. About 60% of mem_limit; lower it with mem_limit.
+      NODE_OPTIONS: --max-old-space-size=160
+    depends_on:
+      # The deploy passes --no-deps; Postgres is up and migrated by then.
+      postgres:
+        condition: service_healthy
+    # No ports: the worker only makes outbound calls.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    # SIGTERM: pg-boss stops gracefully within 60 s, so running handlers finish their poll_run rows.
+    stop_grace_period: 75s
+    restart: unless-stopped
+    healthcheck:
+      # The heartbeat touches /tmp/worker-alive every 10 s while the database answers and pg-boss runs.
+      test: ["CMD-SHELL", "test $$(( $$(date +%s) - $$(stat -c %Y /tmp/worker-alive) )) -lt 30"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
     logging:
       driver: json-file
       options:
@@ -84,6 +152,9 @@ services:
       DATABASE_URL: postgres://ebay_sniper:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/ebay_sniper
       # Set as the app role password on every run, then checked by connecting as app.
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}
+      # Set as the worker and dashboard role passwords, then checked by each role's probe.
+      POSTGRES_WORKER_PASSWORD: ${POSTGRES_WORKER_PASSWORD:?POSTGRES_WORKER_PASSWORD is required}
+      POSTGRES_DASHBOARD_PASSWORD: ${POSTGRES_DASHBOARD_PASSWORD:?POSTGRES_DASHBOARD_PASSWORD is required}
       TZ: UTC
     working_dir: /app/apps/ops
     command: ["node", "dist/main.js", "migrate"]

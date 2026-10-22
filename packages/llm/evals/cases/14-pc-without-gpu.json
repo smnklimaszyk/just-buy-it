@@ -1,0 +1,28 @@
+{
+  "id": "14-pc-without-gpu",
+  "group": "scam",
+  "segment": "pc_4090",
+  "listing": {
+    "title": "High End Gaming PC mit RTX 4090 i9 13900K 64GB",
+    "condition": "Gebraucht",
+    "condition_description": null,
+    "price_eur": 1060,
+    "shipping_eur": 40,
+    "landed_eur": 1100,
+    "owner_max_eur": 1920,
+    "percent_of_max": 57,
+    "seller": { "feedback_score": 12, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 2,
+    "item_specifics": [
+      { "name": "Prozessor", "value": "Intel Core i9-13900K" },
+      { "name": "Arbeitsspeichergröße", "value": "64 GB" }
+    ],
+    "image_count": 5,
+    "description": "Gehäuse, Mainboard Z790, i9 13900K, 64 GB DDR5, 2 TB SSD, 1200 W Netzteil. Die Grafikkarte ist nicht enthalten, die RTX 4090 auf den Bildern dient nur zur Illustration. Ideal für alle, die ihre eigene Karte einbauen wollen.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["block"] }
+}

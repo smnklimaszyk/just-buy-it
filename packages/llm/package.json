@@ -1,0 +1,29 @@
+{
+  "name": "@ebay-sniper/llm",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "eval": "vitest run --config vitest.eval.config.ts",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ebay-sniper/domain": "workspace:*",
+    "zod": "4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "tdd-guard-vitest": "0.2.0",
+    "typescript": "6.0.3",
+    "vitest": "5.0.4"
+  }
+}

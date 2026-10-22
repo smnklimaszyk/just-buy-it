@@ -47,6 +47,14 @@ Versions from https://registry.npmjs.org/, 2026-10-19.
 - The runner checks the journal and the applied hashes itself before calling Drizzle, because Drizzle 0.45.4 compares only the journal `when` values: it never notices an applied file that was edited, and it skips a new entry whose `when` is older than the last applied one. Both stop the migration. Applied rows newer than the release's folder (an older release deployed over a newer schema) are allowed and logged.
 - pg-boss is not part of S1b. The pg-boss migrate step comes in S4 with the first job and must use the pinned package's CLI or its `migrateCommands` run by our runner, never an in-process `start()` followed by `stop()`, which skips the async index builds.
 
+**MVP amendment (2026-10-21)**:
+
+- pg-boss is pinned at 12.38.0 (published 2026-10-13, pg-boss schema version 46), with its required peer `@opentelemetry/api` pinned at 1.9.1 in `packages/db`. Every pg-boss update, patch included, waits for approval on the Renovate dependency dashboard.
+- Step 2 is `packages/db/src/queue/migrate-queue.ts`, run by the migrate runner under its advisory lock after the Drizzle migrations and the role passwords. It reads `pgboss.version`. With no schema it creates schema `pgboss` owned by role `worker` and runs pg-boss's construction plans as `worker` on the locked client, so every pg-boss object belongs to the worker and runtime maintenance needs no superuser. At version 46 it does nothing. Any other version stops the deploy with exit 1. The queues are created in the same step. Neither the CLI nor an in-process `start()` migrates.
+- A fresh schema has no async index builds; a test checks that every `pgboss` index is valid.
+- No upgrade path to a later pg-boss schema is built. It comes with the first pg-boss update.
+- The worker starts pg-boss with `migrate: false`; a missing or different schema version makes `start()` throw and the worker exit 1, so Compose marks it unhealthy and the deploy rolls back. The server does not start pg-boss in the MVP.
+
 ## Alternatives considered
 
 - **Prisma 7**: own schema language, less control over migration SQL.

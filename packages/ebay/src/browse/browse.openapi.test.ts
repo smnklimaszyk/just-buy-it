@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { itemSummarySchema, searchPageSchema } from "./schemas.js";
+import { itemSchema, itemSummarySchema, searchPageSchema } from "./schemas.js";
 
 // Manual conformance check against the pinned Browse OpenAPI file. Run it with
 // `pnpm --filter @ebay-sniper/ebay openapi:check`, which downloads the file first. Never in CI.
@@ -71,6 +71,16 @@ describe("Browse OpenAPI file", () => {
       [],
     );
     expect(mismatches(z.toJSONSchema(itemSummarySchema) as JsonSchema, specSchema("ItemSummary"))).toEqual([]);
+    expect(mismatches(z.toJSONSchema(itemSchema) as JsonSchema, specSchema("Item"))).toEqual([]);
+  });
+
+  it("names Item as the 200 answer of getItem", () => {
+    const getItem = (spec as unknown as {
+      paths: Record<string, { get: { responses: Record<string, { content?: Record<string, { schema: JsonSchema }> }> } }>;
+    }).paths["/item/{item_id}"];
+
+    const answer = getItem?.get.responses["200"]?.content?.["application/json"]?.schema;
+    expect(answer?.$ref).toBe("#/components/schemas/Item");
   });
 
   it("reports a field the spec lacks and a field with another type", () => {

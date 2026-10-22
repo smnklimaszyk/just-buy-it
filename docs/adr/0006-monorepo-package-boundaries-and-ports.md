@@ -51,6 +51,14 @@ Rules:
 - `ops` env is the database URL plus the `app` role password (`POSTGRES_APP_PASSWORD`). `ops migrate` sets that password on role `app` after the migrations and then checks the role by connecting as `app`.
 - The S1b open point is decided: the single `exports` entry stays, and ADR 0007's rule that the server imports only four `packages/ebay` modules is dropped. dependency-cruiser cannot check modules behind one entry; `packages/ebay/src/index.ts` is short, so a new export shows in review.
 
+**MVP amendment (2026-10-21)**:
+
+- `apps/worker` and the packages `domain`, `llm` and `notify` exist. `packages/db` has a second entry, `@ebay-sniper/db/queue`, for the pg-boss wrapper, used by the worker and by `ops migrate`; the server imports only the main entry and never loads pg-boss.
+- The `notify` adapter is SMTP through nodemailer (ADR 0035), not SES.
+- The `fromDrizzle` wording is settled: it is not used. The poll, sweep, enrich and screen transactions enqueue with pg-boss's `db` option on the checked-out `pg` client (an `executeSql` wrapper), so the job and the rows commit or roll back together. The worker has no Drizzle dependency.
+- New dependency-cruiser rules: `server-no-llm` and `server-no-notify` (ADR 0007: the server never calls Anthropic and sends no alert email), `pg-boss-only-in-queue` (only `packages/db/src/queue/` imports pg-boss), `nodemailer-only-in-notify`, and `domain-no-runtime-deps` (domain source imports no npm package and no Node module; tests may import vitest). Each has a fixture in `tools/depcruise-selftest/fixtures/` that must report exactly its rule.
+- ESLint (`no-restricted-syntax`) rejects the Anthropic API host string in any file outside `packages/llm`.
+
 | Port | Adapters | Why |
 |---|---|---|
 | `ListingSource` | Browse production, synthetic fixtures. No sandbox adapter | Dev and CI need no production keyset |

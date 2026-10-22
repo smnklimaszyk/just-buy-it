@@ -1,0 +1,29 @@
+{
+  "id": "05-rtx3090ti-mining",
+  "group": "legitimate",
+  "segment": "gpu_3090ti",
+  "listing": {
+    "title": "ASUS TUF RTX 3090 Ti 24GB Gaming OC",
+    "condition": "Gebraucht",
+    "condition_description": "Neue Wärmeleitpaste und Pads.",
+    "price_eur": 575,
+    "shipping_eur": 15,
+    "landed_eur": 590,
+    "owner_max_eur": 600,
+    "percent_of_max": 98,
+    "seller": { "feedback_score": 143, "feedback_percent": 99.3, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 4,
+    "item_specifics": [
+      { "name": "Marke", "value": "ASUS" },
+      { "name": "Chipsatz/GPU-Modell", "value": "NVIDIA GeForce RTX 3090 Ti" },
+      { "name": "Speichergröße", "value": "24 GB" }
+    ],
+    "image_count": 6,
+    "description": "Ehrlich gesagt: Die Karte lief etwa ein Jahr im Mining, mit reduziertem Powerlimit und offenem Rahmen bei guter Kühlung. Danach habe ich Wärmeleitpaste und Pads erneuert. Speichertemperatur jetzt unter 80 Grad, keine Artefakte, alle Lüfter laufen ruhig. Rechnung vom Händler liegt bei.",
+    "rule_flags": ["mining_history"],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["caution", "pass"], "must_flag": ["mining_history"] }
+}

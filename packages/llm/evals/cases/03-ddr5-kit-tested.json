@@ -1,0 +1,31 @@
+{
+  "id": "03-ddr5-kit-tested",
+  "group": "legitimate",
+  "segment": "ram_ddr5",
+  "listing": {
+    "title": "32GB (2x16GB) DDR5-6000 CL30 Desktop RAM Kit Non-ECC",
+    "condition": "Gebraucht",
+    "condition_description": "Wie neu.",
+    "price_eur": 165,
+    "shipping_eur": 5,
+    "landed_eur": 170,
+    "owner_max_eur": 179.2,
+    "percent_of_max": 95,
+    "seller": { "feedback_score": 88, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 7,
+    "item_specifics": [
+      { "name": "Kapazität", "value": "32 GB" },
+      { "name": "Speichertyp", "value": "DDR5 SDRAM" },
+      { "name": "Formfaktor", "value": "DIMM" },
+      { "name": "Anzahl der Module", "value": "2" },
+      { "name": "Fehlerkorrektur", "value": "Non-ECC" }
+    ],
+    "image_count": 4,
+    "description": "Verkaufe mein DDR5-Kit mit 2 x 16 GB. Lief acht Monate auf einem ASUS TUF B650-Plus mit EXPO-Profil 6000 MT/s ohne Fehler, Memtest vor dem Ausbau bestanden. Desktop-Module (DIMM), kein ECC. Versand als Warensendung oder versichert gegen Aufpreis.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["pass"] }
+}
