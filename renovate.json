@@ -29,6 +29,12 @@
       "allowedVersions": "<1.0.0"
     },
     {
+      "description": "imapflow and postal-mime publish several times a week; take them in one pull request on Monday mornings (ADR 0036).",
+      "matchPackageNames": ["imapflow", "postal-mime"],
+      "groupName": "imapflow and postal-mime",
+      "schedule": ["* 0-3 * * 1"]
+    },
+    {
       "description": "Postgres 19 needs a dump and restore of the data volume; stay on 18.",
       "matchDatasources": ["docker"],
       "matchPackageNames": ["postgres"],

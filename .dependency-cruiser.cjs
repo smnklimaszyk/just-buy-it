@@ -21,9 +21,9 @@ module.exports = {
     },
     {
       name: "leaf-packages-import-no-workspace-package",
-      comment: "contracts, domain and logging import no other workspace package.",
+      comment: "contracts, domain, logging and kleinanzeigen import no other workspace package.",
       severity: "error",
-      from: { path: "^packages/(contracts|domain|logging)/" },
+      from: { path: "^packages/(contracts|domain|logging|kleinanzeigen)/" },
       to: { path: WORKSPACE, pathNot: "^packages/$1/" },
     },
     {
