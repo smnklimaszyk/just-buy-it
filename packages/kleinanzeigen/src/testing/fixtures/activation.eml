@@ -1,0 +1,55 @@
+Return-Path: <bounces+0000000-0000-mailbox=example.invalid@em4286.kleinanzeigen.de>
+Delivered-To: mailbox@example.invalid
+Received: from mail.intra-ai.de
+	by ubuntu with LMTP
+	id aAaaAAaA0Aa0AAAAaaaAaa
+	(envelope-from <bounces+0000000-0000-mailbox=example.invalid@em4286.kleinanzeigen.de>)
+	for <mailbox@example.invalid>; Wed, 21 Oct 2026 12:38:50 +0200
+Authentication-Results: mail.intra-ai.de;
+	dkim=pass (2048-bit key; unprotected) header.d=kleinanzeigen.de header.i=@kleinanzeigen.de header.a=rsa-sha256 header.s=ka1 header.b=A00aAAaa;
+	dkim-atps=neutral
+Received: from o22.ptr2619.kleinanzeigen.de (o22.ptr2619.kleinanzeigen.de [192.254.114.236])
+	by mail.intra-ai.de (Postfix) with ESMTPS id A0AA0A000A0
+	for <mailbox@example.invalid>; Wed, 21 Oct 2026 12:38:49 +0200 (CEST)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=kleinanzeigen.de;
+	h=date:from:subject:mime-version:to:content-type:
+	content-transfer-encoding:cc:content-type:date:from:subject:to;
+	s=ka1; t=1792579128;
+	bh=0A+AaA00aAA/a0aA0aaaAa0AaA/0aaAaa/a0aa0AaAa=;
+	b=A00aAAaaaaAAAAAaAaAaaaAaa0AAaaaaAaAA0AAaAaaa0Aa+aAaAa0AaaAaa0A0aaA00
+	AA00AAAaAaAAaAaaaaa00AAAA00AaaAaa0AaaA0aAaAA00aaaaAA0a00Aa0AA0A/AAAA0a
+	AAAaaaaAaa+aaAAA0aa0AaAA0aA0AaaAa00AAAa0aa0AAaaaAAAaaAaaaa0aAa0A0a0aAa
+	AA00A+aa+aaaa0AAaaAaAAAaa0AaA0AaAAA0aAAAa0aAAaAaA0+0A0a0Aa0a0aAA0AAaaa
+	aa0aAAaA0aaaaaA0a00aAaA0/aAAa0Aaaaa0Aa+a/0a0AA0Aa0AAa0a0aAaaaaaa==
+Received: by recvd-fixture with SMTP id recvd-fixture-0-0AA00000-0
+	2026-10-21 10:38:48.03424646 +0000 UTC m=+1877894.759751460
+Received: from mailout-smtp-7.localdomain (unknown)
+	by geopod-ismtpd-1 (SG)
+	with ESMTP id a_0AAaAaAAAAA0_AA0AAaa
+	for <mailbox@example.invalid>;
+	Wed, 21 Oct 2026 10:38:47.951 +0000 (UTC)
+Received: from desktop-fixture (ip-10-237-220-99.eu-central-1.compute.internal [10.237.220.99])
+	by mailout-smtp-7.localdomain (Postfix) with ESMTP id A0A000A
+	for <mailbox@example.invalid>; Wed, 21 Oct 2026 10:38:47 +0000 (UTC)
+Date: Wed, 21 Oct 2026 10:38:48 +0000 (UTC)
+From: Kleinanzeigen <noreply@kleinanzeigen.de>
+Message-ID: <1000000006.1.1792580000000@saved-search-application-fixture>
+Subject: Aktiviere dein Konto bei Kleinanzeigen
+MIME-Version: 1.0
+To: mailbox@example.invalid
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset=3D"utf-8">
+  <title>Kleinanzeigen</title>
+</head>
+<body>
+  <p>Hallo,</p>
+  <p>bitte best=C3=A4tige deine E-Mail-Adresse, damit wir dein Konto bei Kl=
+einanzeigen aktivieren k=C3=B6nnen.</p>
+  <p>Der Aktivierungslink ist in dieser Testdatei entfernt.</p>
+</body>
+</html>

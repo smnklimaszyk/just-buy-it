@@ -1,6 +1,6 @@
 # Architecture decision records
 
-Index required by ADR 0001; D-xx: [02-decisions](../planning/02-decisions.md). All were written 2026-10-19 and are **proposed**; none is accepted until Simon merges it (Lifecycle below). A record is proposed before its work starts and accepted by "Needed by". Phase 0 starts Mon 19 Oct 2026. On day 1 (S0), before the ADR 0001 CI check is on, Simon turns each "Needed by" into an ISO date, recalibrated from Phase 0 actuals.
+Index required by ADR 0001; D-xx: [02-decisions](../planning/02-decisions.md). Records 0001 to 0033 were written 2026-10-19, 0035 and 0036 on 2026-10-21; all are **proposed**; none is accepted until Simon merges it (Lifecycle below). A record is proposed before its work starts and accepted by "Needed by". Phase 0 starts Mon 19 Oct 2026. On day 1 (S0), before the ADR 0001 CI check is on, Simon turns each "Needed by" into an ISO date, recalibrated from Phase 0 actuals.
 
 | ADR | Title | Status | Notes | Needed by |
 |---|---|---|---|---|
@@ -39,6 +39,7 @@ Index required by ADR 0001; D-xx: [02-decisions](../planning/02-decisions.md). A
 | [0033](0033-calibration-and-config-change-process.md) | Calibration and config changes | proposed | Waits on metrics, labels, approver | First Phase 5 calibration |
 | 0034 | Fair-value method v2 | — | Reserved | Only if 5A.8 changes the method |
 | [0035](0035-alert-email-over-smtp.md) | Alert email over SMTP (MVP) | proposed | Owner decision 2026-10-21; amends 0022 for the MVP and 0006 | MVP go-live |
+| [0036](0036-kleinanzeigen-saved-search-emails.md) | Kleinanzeigen alert emails | proposed | Emails only, read-only IMAP. Owner Simon; blocks no phase; settles when the MVP merges and the worker wiring starts; deadline: ISO date not set yet (Simon) | None |
 
 Plan decisions 001 to 016 map to 0002, 0006/0007, 0017, 0018/0019, 0016, 0013, 0021, 0022, 0005, 0019/0004, 0019/0028, 0032, 0015, 0020, 0014/0025, 0010. The rest have none.
 
