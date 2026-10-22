@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SEGMENTS, segmentInfo } from "./segments.js";
+import { isKnownSegment, SEGMENTS, segmentInfo, segmentLabel } from "./segments.js";
 
 describe("segment table", () => {
   it("gives each segment its feed, sweep minute and labels", () => {
@@ -12,5 +12,21 @@ describe("segment table", () => {
       ["pc_4090", "pc", 55, "PC with RTX 4090"],
     ]);
     expect(segmentInfo("gpu_3090").description).toBe("used NVIDIA RTX 3090 graphics card, 24 GB");
+  });
+});
+
+// v2 writes product keys such as p_k3x9ab2cde into the same columns; this release reads them.
+describe("keys this release does not know", () => {
+  it("tells the six segments from any other key", () => {
+    expect(SEGMENTS.every(isKnownSegment)).toBe(true);
+    expect(isKnownSegment("p_k3x9ab2cde")).toBe(false);
+    expect(isKnownSegment("")).toBe(false);
+    expect(isKnownSegment("toString")).toBe(false);
+  });
+
+  it("labels a known segment by its short name and any other key by the key itself", () => {
+    expect(segmentLabel("gpu_3090ti")).toBe("RTX 3090 Ti");
+    expect(segmentLabel("p_k3x9ab2cde")).toBe("p_k3x9ab2cde");
+    expect(segmentLabel("constructor")).toBe("constructor");
   });
 });

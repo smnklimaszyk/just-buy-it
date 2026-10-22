@@ -1,4 +1,4 @@
-import { startingSegmentRule, type SegmentRule } from "@ebay-sniper/domain";
+import { startingSegmentRule, type Segment, type SegmentRule } from "@ebay-sniper/domain";
 import { describe, expect, it } from "vitest";
 import { renderAlertEmail, type AlertEmailInput } from "./render.js";
 
@@ -107,6 +107,25 @@ describe("renderAlertEmail", () => {
     );
     expect(email.html).toMatch(/<div class="warning"[^>]*>\s*<p><strong>Claude screening: CHECK BEFORE BUYING<\/strong>/);
     expect(renderAlertEmail(passAlert).html).not.toContain('class="warning"');
+  });
+
+  it("marks a model pass CHECK when the model flagged prompt_injection", () => {
+    const email = renderAlertEmail({
+      ...passAlert,
+      screening: { screened: true, verdict: "pass", productMatch: "match", riskFlags: ["prompt_injection"], reason: "Looks fine." },
+    });
+    expect(email.subject).toBe("[Deal] RTX 3090: EUR 489 incl. shipping (94% of max) - CHECK");
+    expect(email.text).toContain(
+      ["Claude screening: CHECK BEFORE BUYING", "Reason:        Looks fine.", "Risk flags:    prompt injection"].join("\n"),
+    );
+  });
+
+  it("names the rule by its key when this release does not know the key", () => {
+    // A product key as v2 writes it; the type only knows the six segments.
+    const rule = { ...gpu3090, segment: "p_k3x9ab2cde" as Segment };
+    const email = renderAlertEmail({ ...passAlert, rule });
+    expect(email.subject).toBe("[Deal] p_k3x9ab2cde: EUR 489 incl. shipping (94% of max) - PASS");
+    expect(email.text).toContain("Rule:          p_k3x9ab2cde, landed price at most EUR 520.00 (rules v3)");
   });
 
   it("marks a model-only block CLAUDE SAYS BLOCK in subject and body, with the reason", () => {

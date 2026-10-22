@@ -15,8 +15,7 @@ import {
   formatAsOf,
   formatBerlinTime,
   formatEur,
-  segmentInfo,
-  type Segment,
+  segmentLabel,
 } from "@ebay-sniper/domain";
 
 // Section 8.1: server-rendered pages with every value escaped, refreshed every minute, no script.
@@ -121,7 +120,8 @@ function feedsSection(feeds: Overview["feeds"]): string {
   )}`;
 }
 
-const label = (segment: Segment): string => segmentInfo(segment).label;
+// A key this release does not know (a v2 product key) is shown as it is.
+const label = (segment: string): string => segmentLabel(segment);
 
 function sweepsSection(sweeps: Overview["sweeps"]): string {
   const rows = sweeps.map(({ segment, lastSweep: run }) =>

@@ -31,9 +31,11 @@ import {
   cleanDescription,
   contentExpiresAt,
   finalVerdict,
+  isKnownSegment,
   LISTING_FLAGS,
   routeAlert,
   scanListing,
+  segmentInfo,
   toListingCandidate,
   type BuyerProfile,
   type Clock,
@@ -80,8 +82,21 @@ export type EnrichDeps = AlertDeps & {
   claude: ClaudeSettings;
 };
 
+// A candidate whose segment this release knows.
+export type KnownCandidate = Candidate & { segment: Segment };
+
+// v2 writes product keys such as p_k3x9ab2cde where a segment stood, and this release has no rule
+// for them. Such a candidate ends expired with reason unknown_segment and null comes back; relay
+// never queues an ended candidate again.
+export async function knownCandidate(db: Queryable, candidate: Candidate): Promise<KnownCandidate | null> {
+  const { segment } = candidate;
+  if (isKnownSegment(segment)) return { ...candidate, segment };
+  await setCandidateDecision(db, candidate.id, { decision: "expired", rejectReason: "unknown_segment" });
+  return null;
+}
+
 export type AlertSource = {
-  candidate: Candidate;
+  candidate: KnownCandidate;
   listing: Listing;
   // getItem content, or the summary content for an alert made without getItem.
   content: ListingContentInput;
@@ -109,12 +124,7 @@ export async function createAlert(
   const { candidate } = source;
   if (candidate.priceCents === null) throw new Error("candidate has no price");
   const screening = source.screening;
-  const verdict = finalVerdict(
-    screening.screened
-      ? { screened: true, verdict: screening.verdict, productMatch: screening.productMatch }
-      : { screened: false, code: screening.code },
-    source.codeSignals,
-  );
+  const verdict = finalVerdict(screening, source.codeSignals);
   const alert = await insertAlert(client, {
     itemKey: candidate.itemKey,
     candidateId: candidate.id,
@@ -215,7 +225,7 @@ type NotScreenedCode = "not_configured" | "paused" | LlmCapCode | "details_unava
 async function alertFromSummary(
   deps: EnrichDeps,
   listing: Listing,
-  candidate: Candidate,
+  candidate: KnownCandidate,
   code: NotScreenedCode,
   slot: boolean,
   now: Date,
@@ -328,7 +338,7 @@ async function rejectAfterEnrich(
 
 // Everything after a getItem answer: gone or ended, the after-enrich rules, the price band on the
 // getItem price and shipping, the code scan of the raw description, then the screen job.
-async function afterGetItem(deps: EnrichDeps, listing: Listing, candidate: Candidate, result: GetItemResult, now: Date): Promise<void> {
+async function afterGetItem(deps: EnrichDeps, listing: Listing, candidate: KnownCandidate, result: GetItemResult, now: Date): Promise<void> {
   const listingId = listing.id;
   if (result.status === "not_found") {
     await markGone(deps, listingId, candidate.id, "not_found", now);
@@ -358,7 +368,8 @@ async function afterGetItem(deps: EnrichDeps, listing: Listing, candidate: Candi
   const enriched: EnrichedCandidate = { priceCents, shippingCents, landedCents, shippingKnown, flags, codeSignals };
 
   // Section 4: rules 5 to 8, 13 and 14 once more on the getItem fields (RAM 15 to 17 also on the
-  // item specifics). A rejection stops here: no Claude call, no alert.
+  // item specifics). A rejection stops here: no Claude call, no alert. The feed comes from the
+  // segment, since a listing row v2 wrote may carry a search id where a feed id stood.
   const after = classifyAfterEnrich(
     {
       title: content.title,
@@ -367,7 +378,7 @@ async function afterGetItem(deps: EnrichDeps, listing: Listing, candidate: Candi
       conditionDescription: content.conditionDescription,
       aspects: item.localizedAspects ?? [],
     },
-    listing.feedId,
+    segmentInfo(candidate.segment).feedId,
     candidate.segment,
   );
   if (after.outcome === "rejected") {
@@ -395,8 +406,13 @@ async function afterGetItem(deps: EnrichDeps, listing: Listing, candidate: Candi
 export function createEnrichHandler(deps: EnrichDeps): JobHandler<"enrich"> {
   return async ({ listingId }, job) => {
     const now = deps.clock.now();
-    const candidate = await getCandidateByListingId(deps.pool, listingId);
-    if (candidate === null || candidate.decision !== "pending") return;
+    const found = await getCandidateByListingId(deps.pool, listingId);
+    if (found === null || found.decision !== "pending") return;
+    const candidate = await knownCandidate(deps.pool, found);
+    if (candidate === null) {
+      deps.log.info({ event: "enrich_done", listing_id: listingId, decision: "expired", slot: false, reason: "unknown_segment" });
+      return;
+    }
     const listing = await getListing(deps.pool, listingId);
     // A gone or deleted listing can never alert; the decision stops relay from queueing it again.
     if (listing === null || listing.goneAt !== null) {

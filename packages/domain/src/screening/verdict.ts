@@ -6,7 +6,7 @@ export type ProductMatch = "match" | "mismatch" | "unclear";
 
 // The model's answer, or the failure or skip code when there is none (section 5.5).
 export type ModelOutcome =
-  | { screened: true; verdict: Verdict; productMatch: ProductMatch }
+  | { screened: true; verdict: Verdict; productMatch: ProductMatch; riskFlags: readonly string[] }
   | { screened: false; code: string };
 
 export type FinalVerdict = {
@@ -15,6 +15,8 @@ export type FinalVerdict = {
   // A code-verified scam floor fired; such an alert is never emailed (section 5.7).
   blockedByCode: boolean;
   screened: boolean;
+  // The model's product answer, unclear when it flagged prompt_injection; null when not screened.
+  productMatch: ProductMatch | null;
 };
 
 export const SCAM_FLOOR_SIGNALS: readonly CodeSignal[] = ["iban_present", "off_ebay_payment_phrase"];
@@ -30,8 +32,12 @@ export function finalVerdict(model: ModelOutcome, signals: readonly CodeSignal[]
   if (signals.length > 0) floor = "caution";
   if (blockedByCode) floor = "block";
   if (!model.screened) {
-    return { finalVerdict: worse("caution", floor), modelVerdict: null, blockedByCode, screened: false };
+    return { finalVerdict: worse("caution", floor), modelVerdict: null, blockedByCode, screened: false, productMatch: null };
   }
-  if (model.productMatch === "mismatch") floor = worse(floor, "caution");
-  return { finalVerdict: worse(model.verdict, floor), modelVerdict: model.verdict, blockedByCode, screened: true };
+  // A listing that tried to address the model is never a pass, and the model's product answer is
+  // not trusted then.
+  const injected = model.riskFlags.includes("prompt_injection");
+  const productMatch: ProductMatch = injected ? "unclear" : model.productMatch;
+  if (injected || productMatch === "mismatch") floor = worse(floor, "caution");
+  return { finalVerdict: worse(model.verdict, floor), modelVerdict: model.verdict, blockedByCode, screened: true, productMatch };
 }

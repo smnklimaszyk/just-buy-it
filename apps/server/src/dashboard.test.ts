@@ -10,6 +10,7 @@ import type {
 } from "@ebay-sniper/db";
 import { describe, expect, it } from "vitest";
 import { createDashboardApp, dashboardData, type DashboardData } from "./dashboard.js";
+import { alertsHtml, blockedHtml, candidatesHtml, overviewHtml, rejectionsHtml } from "./dashboard-html.js";
 
 const gitSha = "0123456789abcdef0123456789abcdef01234567";
 // 14:40 CEST
@@ -480,6 +481,40 @@ describe("overview page", () => {
 
     expect(html).toContain("No worker status yet.");
     expect(html).toContain("No purge run yet.");
+  });
+});
+
+// Rows v2 writes carry product keys where a segment stood and the decisions wrong_product and held.
+describe("rows v2 wrote", () => {
+  it("show the product key and the decision as stored on every page that lists them", async () => {
+    const key = "p_k3x9ab2cde";
+    const [firstCandidate] = candidates.candidates;
+    const [firstAlert] = alerts;
+    const [firstBlocked] = blocked;
+    const [firstSample] = rejections.samples;
+    if (firstCandidate === undefined || firstAlert === undefined || firstBlocked === undefined || firstSample === undefined) {
+      throw new Error("fixtures changed");
+    }
+    const candidatesPage = candidatesHtml(
+      {
+        ...candidates,
+        candidates: [
+          { ...firstCandidate, segment: key, decision: "wrong_product" },
+          { ...firstCandidate, segment: key, decision: "held" },
+        ],
+      },
+      now,
+    );
+
+    expect(overviewHtml({ ...overview, sweeps: [...overview.sweeps, { segment: key, lastSweep: null }] }, now)).toContain(
+      `<tr><td>${key}</td><td>never</td>`,
+    );
+    expect(candidatesPage).toContain(`<td>${key}</td>`);
+    expect(candidatesPage).toContain("<td>wrong_product</td>");
+    expect(candidatesPage).toContain("<td>held</td>");
+    expect(alertsHtml([{ ...firstAlert, segment: key }], now)).toContain(`<td>${key}</td>`);
+    expect(blockedHtml([{ ...firstBlocked, segment: key }], now)).toContain(`<td>${key}</td>`);
+    expect(rejectionsHtml({ ...rejections, samples: [{ ...firstSample, segment: key }] }, now)).toContain(`<td>${key}</td>`);
   });
 });
 

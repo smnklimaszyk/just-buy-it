@@ -3,6 +3,7 @@ import {
   SEGMENTS,
   berlinDay,
   effectiveRunStatus,
+  isKnownSegment,
   priceStatistics,
   startOfBerlinDay,
   suggestRule,
@@ -44,7 +45,7 @@ export type FeedOverview = {
 export type Overview = {
   worker: WorkerStatus | null;
   feeds: FeedOverview[];
-  sweeps: { segment: Segment; lastSweep: (RunSummary & { items: number; candidates: number }) | null }[];
+  sweeps: { segment: string; lastSweep: (RunSummary & { items: number; candidates: number }) | null }[];
   quota: {
     resource: string;
     windowStart: Date;
@@ -69,7 +70,7 @@ export type Overview = {
 
 type RunDb = {
   feed_id: FeedId;
-  segment: Segment | null;
+  segment: string | null;
   started_at: Date;
   finished_at: Date | null;
   status: RunStatus;
@@ -103,14 +104,14 @@ function percentOfMax(
   return Math.round((100 * checked) / price.totalGb / rule.max_cents_per_gb);
 }
 
-async function ruleLimits(db: Queryable): Promise<Map<Segment, RuleLimits>> {
+async function ruleLimits(db: Queryable): Promise<Map<string, RuleLimits>> {
   const result = await db.query<RuleLimits>("SELECT segment, rule_kind, max_landed_cents, max_cents_per_gb FROM app.segment_rule");
   return new Map(result.rows.map((row) => [row.segment, row]));
 }
 
 export type CandidateRow = {
   createdAt: Date;
-  segment: Segment;
+  segment: string;
   // null once the content expired: no title and no link.
   title: string | null;
   priceCents: number | null;
@@ -134,7 +135,7 @@ export async function candidatesPage(db: Queryable, now: Date): Promise<Candidat
   const rules = await ruleLimits(db);
   const rows = await db.query<{
     created_at: Date;
-    segment: Segment;
+    segment: string;
     price_cents: number | null;
     shipping_cents: number | null;
     landed_cents: number | null;
@@ -199,7 +200,7 @@ export async function candidatesPage(db: Queryable, now: Date): Promise<Candidat
 
 export type AlertRow = {
   createdAt: Date;
-  segment: Segment;
+  segment: string;
   landedCents: number | null;
   finalVerdict: string;
   modelVerdict: string | null;
@@ -216,7 +217,7 @@ export type AlertRow = {
 export async function alertsPage(db: Queryable, now: Date): Promise<AlertRow[]> {
   const result = await db.query<{
     created_at: Date;
-    segment: Segment;
+    segment: string;
     landed_cents: number | null;
     final_verdict: string;
     model_verdict: string | null;
@@ -257,7 +258,7 @@ export async function alertsPage(db: Queryable, now: Date): Promise<AlertRow[]> 
 export type BlockedRow = {
   alertId: string;
   createdAt: Date;
-  segment: Segment;
+  segment: string;
   landedCents: number | null;
   flags: string[];
   riskFlags: string[];
@@ -272,7 +273,7 @@ export async function blockedPage(db: Queryable, now: Date): Promise<BlockedRow[
   const result = await db.query<{
     id: string;
     created_at: Date;
-    segment: Segment;
+    segment: string;
     landed_cents: number | null;
     flags: string[];
     risk_flags: string[] | null;
@@ -361,7 +362,7 @@ export type RejectionsPage = {
   // The unexpired classifier sample: the first 20 rejected and all accepted titles per feed and hour.
   samples: {
     feedId: FeedId;
-    segment: Segment | null;
+    segment: string | null;
     title: string;
     landedCents: number | null;
     outcome: string;
@@ -378,7 +379,7 @@ export async function rejectionsPage(db: Queryable, now: Date): Promise<Rejectio
   );
   const samples = await db.query<{
     feed_id: FeedId;
-    segment: Segment | null;
+    segment: string | null;
     title: string;
     landed_cents: number | null;
     outcome: string;
@@ -571,7 +572,11 @@ export async function overviewPage(db: Queryable, now: Date): Promise<Overview> 
         capReachedLast24h: feed.cap_reached,
       };
     }),
-    sweeps: SEGMENTS.map((segment) => {
+    // The six segments, then any other key a sweep ran for (v2 product keys), in key order.
+    sweeps: [
+      ...SEGMENTS,
+      ...sweeps.rows.flatMap((row) => (row.segment === null || isKnownSegment(row.segment) ? [] : [row.segment])),
+    ].map((segment) => {
       const run = sweeps.rows.find((row) => row.segment === segment);
       return {
         segment,

@@ -25,7 +25,15 @@ export function createApp(options: AppOptions) {
   const isProbe = (code: string) => timingSafeEqual(sha256(code), probeDigest);
 
   app.get("/healthz", (c) => c.json({ sha: options.gitSha }, 200, { "Cache-Control": "no-store" }));
-  app.get("/privacy", (c) => c.html(privacyHtml));
+  // The page loads nothing and posts nothing; only its inline style may apply. The deletion route
+  // keeps its own headers.
+  app.get("/privacy", (c) =>
+    c.html(privacyHtml, 200, {
+      "Content-Security-Policy":
+        "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+      "X-Content-Type-Options": "nosniff",
+    }),
+  );
 
   app.get("/ebay/account-deletion", (c) => {
     const noStore = { "Cache-Control": "no-store" };

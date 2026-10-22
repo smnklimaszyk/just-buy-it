@@ -5,7 +5,7 @@ import {
   formatEur,
   removeHiddenCharacters,
   routeAlert,
-  segmentInfo,
+  segmentLabel,
   vatLine,
   type AlertLabel,
   type BuyerProfile,
@@ -228,7 +228,7 @@ type PriceAgainstRule = { subjectName: string; subjectNote: string; ruleRow: Row
 // The price measured against the segment's max: per item as a share of the max landed price,
 // per GB as the price per GB (rounded to the cent) and its share of the per-GB max.
 function priceAgainstRule(rule: SegmentRule, basisCents: number, totalGb: number | null): PriceAgainstRule {
-  const label = segmentInfo(rule.segment).label;
+  const label = segmentLabel(rule.segment);
   const version = `(rules v${rule.ruleVersion})`;
   if (rule.kind === "per_item") {
     const percent = Math.round((basisCents / rule.maxLandedCents) * 100);
@@ -273,7 +273,7 @@ export function renderAlertEmail(input: AlertEmailInput): AlertEmail {
   const route = routeAlert(
     finalVerdict(
       screening.screened
-        ? { screened: true, verdict: screening.verdict, productMatch: screening.productMatch }
+        ? { screened: true, verdict: screening.verdict, productMatch: screening.productMatch, riskFlags: screening.riskFlags }
         : { screened: false, code: screening.code },
       input.codeSignals,
     ),

@@ -1,7 +1,8 @@
-// Offline eval set of section 5.8: 16 synthetic cases, one real Claude call each. Run by hand only:
+// Offline eval set of section 5.8: 17 synthetic cases, one real Claude call each. Run by hand only:
 //   ANTHROPIC_API_KEY=... pnpm --filter @ebay-sniper/llm eval
-// Without the key every case is skipped, so the run costs nothing; only the case files are checked.
-// Expected cost about USD 0.35 a run, worst case 16 x USD 0.062 = USD 0.99. Reports are printed,
+// Without the key every case is skipped, so the run costs nothing; only the case files and the pass
+// rule are checked.
+// Expected cost about USD 0.37 a run, worst case 17 x USD 0.062 = USD 1.05. Reports are printed,
 // never committed.
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -23,7 +24,8 @@ import {
 } from "../src/index.js";
 
 const CASES_DIR = new URL("./cases/", import.meta.url);
-const CASE_COUNT = 16;
+const CASE_COUNT = 17;
+const LEGITIMATE_COUNT = 8;
 const MAX_LEGITIMATE_MISSES = 2;
 
 const euros = z.number().nonnegative();
@@ -63,7 +65,8 @@ const expectedSchema = z.union([
 
 const caseSchema = z.strictObject({
   id: z.string().regex(/^\d{2}-[a-z0-9-]+$/),
-  // Cases 1 to 8 are legitimate listings, 9 to 16 scams or wrong products (section 5.8).
+  // Cases 1 to 8 are legitimate listings, 9 to 16 scams or wrong products (section 5.8), 17 a
+  // wrong product whose text tells the model to call it a match.
   group: z.enum(["legitimate", "scam"]),
   segment: z.enum(SEGMENTS),
   listing: listingSchema,
@@ -143,6 +146,10 @@ function passRuleFailures(outcomes: readonly Outcome[]): string[] {
   for (const o of outcomes.filter((o) => o.evalCase.group === "scam")) {
     // A failed call gives no verdict, so it does not show that the case is caught.
     if (o.verdict === null || o.verdict === "pass") failures.push(`${o.evalCase.id}: scam case got ${o.verdict ?? o.failureCode}`);
+    // The caution floor of finalVerdict fires on this flag alone, so a verdict without it is not enough.
+    else if (o.evalCase.expected.must_flag?.includes("prompt_injection") === true && !o.riskFlags.includes("prompt_injection")) {
+      failures.push(`${o.evalCase.id}: scam case has no prompt_injection flag`);
+    }
   }
   const legitimateMisses = legitimate.filter(misses);
   if (legitimateMisses.length > MAX_LEGITIMATE_MISSES) {
@@ -173,13 +180,35 @@ const cases = loadCases();
 const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
 
 describe("screening eval set", () => {
-  it("has 16 valid cases, 8 legitimate and 8 scam, each within the input cap", () => {
+  it("has 17 valid cases, 8 legitimate and 9 scam, each within the input cap", () => {
     expect(cases).toHaveLength(CASE_COUNT);
     expect(new Set(cases.map((c) => c.id)).size).toBe(CASE_COUNT);
-    expect(cases.filter((c) => c.group === "legitimate")).toHaveLength(CASE_COUNT / 2);
+    expect(cases.filter((c) => c.group === "legitimate")).toHaveLength(LEGITIMATE_COUNT);
     for (const evalCase of cases) expect(renderUserMessage(fieldsOf(evalCase)).inputCapped).toBe(false);
     if (apiKey === "") print("ANTHROPIC_API_KEY is not set: every eval case is skipped, no Claude call is made.");
   });
+
+  // The prompt_injection caution floor of finalVerdict fires on the flag alone, so an injection
+  // case that answers caution or block without the flag still fails the run.
+  it.each(["15-rtx3090-prompt-injection", "17-rtx4090-injection-claims-match"])(
+    "fails the run when %s is not pass but has no prompt_injection flag",
+    (id) => {
+      const expectedAnswer = (evalCase: EvalCase): Outcome => ({
+        evalCase,
+        requestBytes: 0,
+        verdict: VERDICTS.find((v) => allows(evalCase.expected, v)) ?? "block",
+        riskFlags: evalCase.expected.must_flag ?? [],
+        failureCode: null,
+        usage: null,
+        costMicroUsd: 0,
+      });
+      const answers = cases.map(expectedAnswer);
+      expect(passRuleFailures(answers)).toEqual([]);
+
+      const unflagged = answers.map((o): Outcome => (o.evalCase.id === id ? { ...o, verdict: "caution", riskFlags: [] } : o));
+      expect(passRuleFailures(unflagged)).toEqual([`${id}: scam case has no prompt_injection flag`]);
+    },
+  );
 
   // One test runs the cases one after another, prints one line per case and applies the pass rule
   // to all of them. Each call has its own 60 s timeout.
