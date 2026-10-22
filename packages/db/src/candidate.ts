@@ -1,9 +1,6 @@
 import type { CodeSignal, FeedId, ListingFlag, RejectReason, Segment } from "@ebay-sniper/domain";
 import type { Queryable } from "./pool.js";
 
-// expired: the listing content aged out (6 h) before an alert could be made from it.
-export type CandidateDecision = "pending" | "alerted" | "blocked" | "rejected_after_enrich" | "gone" | "expired";
-
 export type CandidateInput = {
   itemKey: string;
   listingId: string;
@@ -20,11 +17,15 @@ export type CandidateInput = {
   createdAt: Date;
 };
 
-export type Candidate = Omit<CandidateInput, "priceCents"> & {
+export type Candidate = Omit<CandidateInput, "priceCents" | "segment"> & {
   id: string;
+  // A row v2 wrote may carry a product key instead of a segment; isKnownSegment tells them apart.
+  segment: string;
   // NULL after 30 days (purge step 5).
   priceCents: number | null;
-  decision: CandidateDecision;
+  // pending, alerted, blocked, rejected_after_enrich, gone or expired (the listing content aged out,
+  // 6 h, before an alert could be made from it). A row v2 wrote may also hold wrong_product or held.
+  decision: string;
   rejectReason: RejectReason | null;
   enrichStartedAt: Date | null;
   // Set by enrich from the getItem title and raw description; empty before.
@@ -39,7 +40,7 @@ type CandidateRow = {
   item_key: string;
   listing_id: string;
   feed_id: FeedId;
-  segment: Segment;
+  segment: string;
   source: "poll" | "sweep";
   price_cents: number | null;
   shipping_cents: number | null;
@@ -49,7 +50,7 @@ type CandidateRow = {
   rule_version: number;
   flags: ListingFlag[];
   code_signals: CodeSignal[];
-  decision: CandidateDecision;
+  decision: string;
   reject_reason: RejectReason | null;
   enrich_started_at: Date | null;
   created_at: Date;
@@ -153,6 +154,7 @@ export async function updateCandidateAfterEnrich(db: Queryable, candidateId: str
 
 export type DecisionInput =
   | { decision: "alerted" | "blocked" | "gone" | "expired"; rejectReason: null }
+  | { decision: "expired"; rejectReason: "unknown_segment" }
   | { decision: "rejected_after_enrich"; rejectReason: RejectReason };
 
 // The candidate's outcome, written once (true) in the transaction that makes it.

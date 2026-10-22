@@ -344,3 +344,42 @@ describe("rejectionsPage and pricesPage", () => {
     expect(prices.map((row) => row.segment)).toEqual(["gpu_3090", "gpu_3090ti", "gpu_4090", "ram_ddr4", "ram_ddr5", "pc_4090"]);
   });
 });
+
+// Rows v2 writes: product keys where a segment stood, and the candidate decisions wrong_product and
+// held. The widened check stands in for v2's migration; this release only reads such rows.
+describe("rows v2 wrote", () => {
+  it("are read with their keys and decisions as stored, and a product key's sweep comes after the six segments", async () => {
+    await q(
+      `ALTER TABLE app.candidate DROP CONSTRAINT candidate_decision_known, ADD CONSTRAINT candidate_decision_known
+         CHECK (decision IN ('pending', 'alerted', 'blocked', 'rejected_after_enrich', 'gone', 'expired', 'wrong_product', 'held'))`,
+    );
+    const wrong = await candidate(301, { segment: "p_k3x9ab2cde", feed: "gpu", price: 45000, landed: 46000, contentAgo: -HOUR, createdAgo: 5 });
+    const held = await candidate(302, { segment: "p_k3x9ab2cde", feed: "gpu", price: 47000, landed: 48000, contentAgo: -HOUR, createdAgo: 4 });
+    await q("UPDATE app.candidate SET decision = 'wrong_product' WHERE id = $1", [wrong.candidateId]);
+    await q("UPDATE app.candidate SET decision = 'held' WHERE id = $1", [held.candidateId]);
+    await q(
+      "INSERT INTO app.poll_run (feed_id, segment, kind, started_at, finished_at, status, items, candidates) VALUES ('gpu', 'p_k3x9ab2cde', 'sweep', $1, $1, 'ok', 20, 2)",
+      [ago(HOUR)],
+    );
+    await q(
+      `INSERT INTO app.alert (item_key, candidate_id, segment, final_verdict, blocked_by_code, screened, landed_cents, rule_version, buyer_profile, created_at)
+       VALUES ($1, $2, 'p_k3x9ab2cde', 'caution', false, false, 48000, 1, 'company', $3)`,
+      [held.itemKey, held.candidateId, ago(3)],
+    );
+
+    const overview = await overviewPage(dashboard, NOW);
+    const candidates = await candidatesPage(dashboard, NOW);
+    const alerts = await alertsPage(dashboard, NOW);
+
+    expect(overview.sweeps.map((s) => s.segment)).toEqual(["gpu_3090", "gpu_3090ti", "gpu_4090", "ram_ddr4", "ram_ddr5", "pc_4090", "p_k3x9ab2cde"]);
+    expect(overview.sweeps.at(-1)).toEqual({
+      segment: "p_k3x9ab2cde",
+      lastSweep: { startedAt: ago(HOUR), status: "ok", stale: false, items: 20, candidates: 2 },
+    });
+    expect(candidates.candidates.slice(0, 2).map((c) => [c.segment, c.decision, c.percentOfMax])).toEqual([
+      ["p_k3x9ab2cde", "held", null],
+      ["p_k3x9ab2cde", "wrong_product", null],
+    ]);
+    expect(alerts[0]).toMatchObject({ segment: "p_k3x9ab2cde", finalVerdict: "caution" });
+  });
+});

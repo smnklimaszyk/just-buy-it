@@ -56,3 +56,13 @@ const INFO: Record<Segment, SegmentInfo> = {
 export function segmentInfo(segment: Segment): SegmentInfo {
   return INFO[segment];
 }
+
+// Rows v2 wrote may carry a product key such as p_k3x9ab2cde where a segment stood.
+export function isKnownSegment(key: string): key is Segment {
+  return SEGMENTS.some((segment) => segment === key);
+}
+
+// The short name of a known segment, otherwise the key itself.
+export function segmentLabel(key: string): string {
+  return isKnownSegment(key) ? INFO[key].label : key;
+}

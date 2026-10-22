@@ -1,4 +1,4 @@
-import { insertCandidate, insertListing, upsertListingContent, type DbPool } from "@ebay-sniper/db";
+import { insertCandidate, insertListing, listingsToScreen, upsertListingContent, type DbPool } from "@ebay-sniper/db";
 import type { JobQueue } from "@ebay-sniper/db/queue";
 import type { CodeSignal } from "@ebay-sniper/domain";
 import { createClaudeScreener, MODEL, PROMPT_VERSION, WORST_CASE_COST_MICROUSD } from "@ebay-sniper/llm";
@@ -204,6 +204,19 @@ describe("screen, a pass (sections 2.4, 5.3)", () => {
     expect(await rows("SELECT final_verdict, model_verdict FROM app.alert")).toEqual([{ final_verdict: "caution", model_verdict: "pass" }]);
     const [message] = await rows<{ subject: string }>("SELECT subject FROM ebay_live.alert_message");
     expect(message?.subject).toBe("[Deal] RTX 3090: EUR 460 incl. shipping (88% of max) - CHECK");
+  });
+
+  it("lifts a model pass to CHECK when the model flagged prompt_injection", async () => {
+    const arranged = await arrangeEnriched(db.admin);
+    const { claude, screen, job } = setup();
+    claude.answer({ verdict: "pass", product_match: "match", risk_flags: ["prompt_injection"], reason: "The text addresses a reviewer." });
+
+    await screen({ listingId: arranged.listingId }, job());
+
+    expect(await rows("SELECT final_verdict, model_verdict FROM app.alert")).toEqual([{ final_verdict: "caution", model_verdict: "pass" }]);
+    const [message] = await rows<{ subject: string }>("SELECT subject FROM ebay_live.alert_message");
+    expect(message?.subject).toBe("[Deal] RTX 3090: EUR 460 incl. shipping (88% of max) - CHECK");
+    expect(await jobs(db, "send")).toHaveLength(1);
   });
 
   it("emails a model-only block marked CLAUDE SAYS BLOCK with the reason (Q7)", async () => {
@@ -596,5 +609,25 @@ describe("screen no-ops", () => {
 
     expect(claude.requests).toEqual([]);
     expect(await rows("SELECT count(*)::int AS n FROM app.screening")).toEqual([{ n: 0 }]);
+  });
+
+  it("expires a candidate whose segment key this release does not know, without a throw, a claim or a call", async () => {
+    const arranged = await arrangeEnriched(db.admin);
+    // A product key as v2 writes it.
+    await db.admin.query("UPDATE app.candidate SET segment = 'p_k3x9ab2cde' WHERE id = $1", [arranged.candidateId]);
+    const { claude, screen, job, log } = setup();
+
+    await screen({ listingId: arranged.listingId }, job());
+
+    expect(claude.requests).toEqual([]);
+    expect(await rows("SELECT decision, reject_reason FROM app.candidate")).toEqual([
+      { decision: "expired", reject_reason: "unknown_segment" },
+    ]);
+    expect(await rows("SELECT count(*)::int AS n FROM app.screening")).toEqual([{ n: 0 }]);
+    expect(await rows("SELECT count(*)::int AS n FROM app.alert")).toEqual([{ n: 0 }]);
+    expect(await listingsToScreen(db.admin, PROMPT_VERSION, new Date(NOW.getTime() + 11 * 60_000), 10)).toEqual([]);
+    expect(log.events("screen_done")).toEqual([
+      { event: "screen_done", listing_id: arranged.listingId, decision: "expired", reason: "unknown_segment" },
+    ]);
   });
 });

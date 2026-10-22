@@ -26,7 +26,15 @@ import {
   type ScreeningResult,
 } from "@ebay-sniper/llm";
 import type { AlertScreening } from "@ebay-sniper/notify";
-import { createAlert, logAlertCreated, segmentRule, type AlertDeps, type AlertSource, type ClaudeSettings } from "./enrich.js";
+import {
+  createAlert,
+  knownCandidate,
+  logAlertCreated,
+  segmentRule,
+  type AlertDeps,
+  type AlertSource,
+  type ClaudeSettings,
+} from "./enrich.js";
 import { inTransaction } from "./poll.js";
 
 export type Sleep = (ms: number, signal: AbortSignal) => Promise<void>;
@@ -104,9 +112,15 @@ export function createScreenHandler(deps: ScreenDeps): JobHandler<"screen"> {
     const now = deps.clock.now();
     const screener = deps.claude.screener;
     const listing = await getListing(deps.pool, listingId);
-    const candidate = await getCandidateByListingId(deps.pool, listingId);
+    const found = await getCandidateByListingId(deps.pool, listingId);
     // A candidate with its decision made (alerted, rejected, gone) is not screened again.
-    if (listing === null || candidate === null || candidate.decision !== "pending" || candidate.priceCents === null) return;
+    if (listing === null || found === null || found.decision !== "pending") return;
+    const candidate = await knownCandidate(deps.pool, found);
+    if (candidate === null) {
+      deps.log.info({ event: "screen_done", listing_id: listingId, decision: "expired", reason: "unknown_segment" });
+      return;
+    }
+    if (candidate.priceCents === null) return;
     // Only getItem content (enrich done) of a listing that is not gone reaches Claude.
     if (listing.goneAt !== null) return;
     const content = listing.content;

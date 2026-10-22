@@ -44,6 +44,19 @@ describe("GET /privacy", () => {
 
     expect(await res.text()).toContain("info@intra-ai.de");
   });
+
+  it("sends a strict content security policy and nosniff", async () => {
+    const app = createApp({ ...base, onNotification: () => undefined });
+
+    const res = await app.request("/privacy");
+
+    expect(res.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    );
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    const deletion = await app.request("/ebay/account-deletion?challenge_code=abc");
+    expect(deletion.headers.get("content-security-policy")).toBeNull();
+  });
 });
 
 describe("GET /ebay/account-deletion", () => {

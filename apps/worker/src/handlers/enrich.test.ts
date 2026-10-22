@@ -1,4 +1,4 @@
-import { insertCandidate, insertListing, upsertListingContent, type DbPool } from "@ebay-sniper/db";
+import { insertCandidate, insertListing, listingsToEnrich, upsertListingContent, type DbPool } from "@ebay-sniper/db";
 import type { JobQueue } from "@ebay-sniper/db/queue";
 import type { ListingFlag, Segment } from "@ebay-sniper/domain";
 import { createClaudeScreener, WORST_CASE_COST_MICROUSD } from "@ebay-sniper/llm";
@@ -246,6 +246,20 @@ describe("enrich with a Claude slot (section 2.4)", () => {
     ]);
     expect(await jobs(db, "screen")).toEqual([]);
     expect(await rows("SELECT count(*)::int AS n FROM app.alert")).toEqual([{ n: 0 }]);
+  });
+
+  it("checks the model by the candidate's segment, not by a feed id this release does not know", async () => {
+    const arranged = await arrangeCandidate(db.admin);
+    // v2 polls per search and may write a search id where a feed id stood.
+    await db.admin.query("UPDATE ebay_live.listing SET feed_id = 's3' WHERE id = $1", [arranged.listingId]);
+    await db.admin.query("UPDATE app.candidate SET feed_id = 's3' WHERE id = $1", [arranged.candidateId]);
+    const { ebay, enrich, job } = setup();
+    ebay.item(arranged.itemId, itemBody(arranged));
+
+    await enrich({ listingId: arranged.listingId }, job());
+
+    expect(await rows("SELECT decision, reject_reason FROM app.candidate")).toEqual([{ decision: "pending", reject_reason: null }]);
+    expect(await jobs(db, "screen")).toEqual([{ listingId: arranged.listingId }]);
   });
 
   it("marks the listing gone on a getItem 404 and makes no alert", async () => {
@@ -660,5 +674,25 @@ describe("enrich no-ops (section 2.4)", () => {
       { decision: "gone", enrich_started_at: null },
     ]);
     expect(await rows("SELECT count(*)::int AS n FROM app.alert")).toEqual([{ n: 0 }]);
+  });
+
+  it("expires a candidate whose segment key this release does not know, without a throw or a getItem, so relay stops", async () => {
+    const arranged = await arrangeCandidate(db.admin);
+    // A product key as v2 writes it.
+    await db.admin.query("UPDATE app.candidate SET segment = 'p_k3x9ab2cde' WHERE id = $1", [arranged.candidateId]);
+    const { ebay, enrich, job, log } = setup();
+
+    await enrich({ listingId: arranged.listingId }, job());
+
+    expect(ebay.requests).toEqual([]);
+    expect(await rows("SELECT decision, reject_reason, enrich_started_at FROM app.candidate")).toEqual([
+      { decision: "expired", reject_reason: "unknown_segment", enrich_started_at: null },
+    ]);
+    expect(await jobs(db, "screen")).toEqual([]);
+    expect(await rows("SELECT count(*)::int AS n FROM app.alert")).toEqual([{ n: 0 }]);
+    expect(await listingsToEnrich(db.admin, new Date(NOW.getTime() + 11 * 60_000), 10)).toEqual([]);
+    expect(log.events("enrich_done")).toEqual([
+      { event: "enrich_done", listing_id: arranged.listingId, decision: "expired", slot: false, reason: "unknown_segment" },
+    ]);
   });
 });
