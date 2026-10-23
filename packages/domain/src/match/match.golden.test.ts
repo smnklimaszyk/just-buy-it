@@ -158,7 +158,9 @@ describe("grammar cases of section 3.5", () => {
     expect(lists.filter((list) => checkWordEntry(list, raw).ok)).toEqual([]);
   });
 
-  it("matches a 10,000-character title against 60 exclude words in under 5 ms", () => {
+  // The bound guards against backtracking, which takes seconds on such a title. It is loose
+  // because CI runners are about four times slower than a laptop (20 ms seen in CI).
+  it("matches a 10,000-character title against 60 exclude words in under 50 ms", () => {
     const excludeWords = Array.from({ length: 60 }, (_, i) => (i % 3 === 0 ? `wort${i}*` : i % 3 === 1 ? `~zwei wort${i}` : `wort${i}`));
     const rules = { ...productOf("road_bike"), excludeWords, warnWords: ["wort*"] };
     const filler = "aaaaaaaa wortx zwei wortz nicht ohne ";
@@ -172,7 +174,7 @@ describe("grammar cases of section 3.5", () => {
     run();
     const runs = Array.from({ length: 5 }, run);
     expect(runs[0]?.result.outcome).toBe("candidate");
-    expect(Math.min(...runs.map((r) => r.ms))).toBeLessThan(5);
+    expect(Math.min(...runs.map((r) => r.ms))).toBeLessThan(50);
   });
 });
 
