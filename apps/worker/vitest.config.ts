@@ -11,6 +11,8 @@ export default defineConfig({
     setupFiles: ["./src/testing/setup.ts"],
     // Test files share the cluster-wide role lock, so they run one at a time.
     fileParallelism: false,
+    // Whole values in failure messages, such as a full email subject.
+    chaiConfig: { truncateThreshold: 0 },
     reporters: ["default", ["tdd-guard-vitest", { projectRoot }]],
   },
 });

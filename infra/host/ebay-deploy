@@ -31,6 +31,8 @@ root="${EBAY_DEPLOY_ROOT:-/opt/ebay-sniper}"
 repo="$root/repo"
 state="$root/state"
 health_url="${EBAY_DEPLOY_HEALTH_URL:-https://deals.intra-ai.de/healthz}"
+# The web service's own /healthz, on the host only (spec 7.1); Traefik sends the public one to server.
+web_health_url="http://127.0.0.1:3141/healthz"
 
 mkdir -p "$state" "$root/releases"
 exec 9>"$state/lock"
@@ -61,23 +63,47 @@ grep -Eq '^POSTGRES_APP_PASSWORD=[0-9a-f]{64}$' "$root/.env" ||
 # The server refuses to start without the external probe's challenge code.
 grep -Eq '^DELETION_PROBE_CODE=[A-Za-z0-9_-]{40}$' "$root/.env" ||
   die "$root/.env must set DELETION_PROBE_CODE to 40 characters of [A-Za-z0-9_-] (see the README)"
-# The worker's DATABASE_URL and the server's dashboard URL embed these the same way; ops migrate
-# sets them as the worker and dashboard role passwords.
-for name in POSTGRES_WORKER_PASSWORD POSTGRES_DASHBOARD_PASSWORD; do
+# The worker's and the web service's DATABASE_URL embed these the same way; ops migrate sets them
+# as the worker, dashboard and web role passwords. The dashboard password stays for a rollback to
+# Release 0, whose server still connects as the dashboard role.
+for name in POSTGRES_WORKER_PASSWORD POSTGRES_DASHBOARD_PASSWORD POSTGRES_WEB_PASSWORD; do
   grep -Eq "^$name=[0-9a-f]{64}\$" "$root/.env" ||
     die "$root/.env must set $name to 64 lowercase hex characters (openssl rand -hex 32)"
 done
-# The worker's item key secret: 32 random bytes in base64, so 43 characters and one "=".
-grep -Eq '^ITEM_KEY_V1=[A-Za-z0-9+/]{43}=$' "$root/.env" ||
-  die "$root/.env must set ITEM_KEY_V1 to 44 base64 characters (openssl rand -base64 32)"
-# The worker refuses a partial SMTP set; an empty value counts as unset, as in the worker.
-smtp_missing=()
-for name in SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD ALERT_FROM; do
-  grep -Eq "^$name=.+" "$root/.env" || smtp_missing+=("$name")
+# The worker's item key secret and the web service's sign-in key (ADR 0038): 32 random bytes in
+# base64 each, so 43 characters and one "=".
+for name in ITEM_KEY_V1 AUTH_KEY; do
+  grep -Eq "^$name=[A-Za-z0-9+/]{43}=\$" "$root/.env" ||
+    die "$root/.env must set $name to 44 base64 characters (openssl rand -base64 32)"
 done
-if ((${#smtp_missing[@]} > 0 && ${#smtp_missing[@]} < 5)); then
-  missing_list="$(printf '%s, ' "${smtp_missing[@]}")"
-  die "$root/.env sets SMTP partially, missing ${missing_list%, } (set all five or none)"
+# ops migrate makes these people admin while no active admin exists (spec 7.8). Compose passes the
+# value as written, so quotes or spaces would end up in the addresses.
+address='[^@,[:space:]"]+@[^@,[:space:]"]+'
+grep -Eq "^AUTH_BOOTSTRAP_ADMINS=$address(,$address)*\$" "$root/.env" ||
+  die "$root/.env must set AUTH_BOOTSTRAP_ADMINS to one or more addresses, separated by commas without spaces"
+# The web service compares the Origin header of every form post with it (spec 7.6), and the route
+# file serves this host only, so any other value breaks every form post.
+grep -Eq '^PUBLIC_ORIGIN=https://deals\.intra-ai\.de$' "$root/.env" ||
+  die "$root/.env must set PUBLIC_ORIGIN=https://deals.intra-ai.de exactly, without a path or a trailing slash"
+# Refuses a partial set of the five names after $1, the label in the message. The worker (SMTP) and
+# the web service (LOGIN_SMTP) refuse one too; an empty value counts as unset, as in both.
+all_five_or_none() {
+  local label="$1" name missing=() missing_list
+  shift
+  for name in "$@"; do
+    grep -Eq "^$name=.+" "$root/.env" || missing+=("$name")
+  done
+  if ((${#missing[@]} > 0 && ${#missing[@]} < 5)); then
+    missing_list="$(printf '%s, ' "${missing[@]}")"
+    die "$root/.env sets $label partially, missing ${missing_list%, } (set all five or none)"
+  fi
+}
+all_five_or_none SMTP SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD ALERT_FROM
+# The sign-in mailbox (noreply@, ADR 0038), never the alert mailbox's password.
+all_five_or_none LOGIN_SMTP LOGIN_SMTP_HOST LOGIN_SMTP_PORT LOGIN_SMTP_USER LOGIN_SMTP_PASSWORD LOGIN_FROM
+# Spec 10.4: the worker no longer reads it, so a value left in .env would mislead.
+if grep -Eq '^CLAUDE_MODEL=.+' "$root/.env"; then
+  echo "ebay-deploy: warning: $root/.env still sets CLAUDE_MODEL, which nothing reads since the model became the claude.model setting; remove the line" >&2
 fi
 
 # The healthchecks.io deploy check is optional; its URL file is root-only like .env.
@@ -109,15 +135,21 @@ compose_up() {
   compose "$1" up -d --build --wait --wait-timeout 120 server
 }
 
-# Polls /healthz for at most 60 seconds (20 tries of up to 2 s plus 1 s pause).
-serves() {
+# Polls the /healthz URL in $1 until it reports the SHA in $2, for at most 60 seconds (20 tries of
+# up to 2 s plus 1 s pause).
+serves_at() {
   local try body
   for ((try = 0; try < 20; try++)); do
-    body="$(curl -fsS --max-time 2 "$health_url" 2>/dev/null || true)"
-    [[ "$body" == "{\"sha\":\"$1\"}" ]] && return 0
+    body="$(curl -fsS --max-time 2 "$1" 2>/dev/null || true)"
+    [[ "$body" == "{\"sha\":\"$2\"}" ]] && return 0
     sleep 1
   done
   return 1
+}
+
+# The server, through the public /healthz.
+serves() {
+  serves_at "$health_url" "$1"
 }
 
 # Keeps the five newest release directories plus the running and previous ones.
@@ -156,12 +188,18 @@ fi
 ((migrate_status == 0)) ||
   die "migration for $sha failed (exit $migrate_status), the running release is unchanged"
 
-# True when the release of the SHA in $1 defines a worker service. The output is read whole
-# before grep, so an early grep exit cannot fail the pipe.
-has_worker() {
+# True when the release of the SHA in $1 defines the service $2. The output is read whole before
+# grep, so an early grep exit cannot fail the pipe.
+has_service() {
   local services
   services="$(compose "$1" config --services 2>/dev/null)" || return 1
-  grep -qx worker <<<"$services"
+  grep -qx "$2" <<<"$services"
+}
+
+# --wait waits for the web healthcheck (healthy about 10 s after start); then its own /healthz
+# must report the SHA.
+web_up() {
+  compose "$1" up -d --no-deps --wait --wait-timeout 60 web && serves_at "$web_health_url" "$1"
 }
 
 # --wait waits for the worker's healthcheck (the heartbeat file, healthy about 30 s after start).
@@ -169,28 +207,39 @@ worker_up() {
   compose "$1" up -d --no-deps --wait --wait-timeout 90 worker
 }
 
-# Stops every worker container of the project, whichever release started it.
-stop_worker() {
+# Stops every container of the service $1 in the project, whichever release started it.
+stop_service() {
   docker ps -q --filter label=com.docker.compose.project=ebay-sniper \
-    --filter label=com.docker.compose.service=worker | xargs -r docker stop >/dev/null
+    --filter label=com.docker.compose.service="$1" | xargs -r docker stop >/dev/null
 }
 
 # Puts the running release's worker back, or stops the new one when that release has none.
 worker_back() {
-  if has_worker "$running"; then
+  if has_service "$running" worker; then
     worker_up "$running"
     return
   fi
   echo "ebay-deploy: $running has no worker, stopping the worker container"
-  stop_worker
+  stop_service worker
 }
 
-# Rolls back to the running release and exits 1. $1 is "server" when only the server was
-# replaced, "worker" when the worker was replaced too.
+# Puts the running release's web service back, or stops the new one when that release has none.
+web_back() {
+  if has_service "$running" web; then
+    web_up "$running"
+    return
+  fi
+  echo "ebay-deploy: $running has no web service, stopping the web container"
+  stop_service web
+}
+
+# Rolls back to the running release and exits 1. $1 is the last service the deploy replaced, in
+# start order: "server", then "web", then "worker".
 roll_back() {
   if [[ -n "$running" ]]; then
     echo "ebay-deploy: rolling back to $running"
-    if compose_up "$running" && serves "$running" && { [[ "$1" == server ]] || worker_back; }; then
+    if compose_up "$running" && serves "$running" && { [[ "$1" == server ]] || web_back; } &&
+      { [[ "$1" != worker ]] || worker_back; }; then
       die "deploy of $sha failed, rolled back to $running"
     fi
     die "deploy of $sha failed and the rollback to $running failed too, check the host now"
@@ -200,15 +249,29 @@ roll_back() {
   die "deploy of $sha failed, no previous release, stopped the new containers"
 }
 
-# The server first, as before; the worker is not touched until the new server serves.
+# The server first, as before, then web, then the worker; each is touched only after the one
+# before it serves the new SHA.
 echo "ebay-deploy: starting $sha"
 if ! { compose_up "$sha" && serves "$sha"; }; then
   echo "ebay-deploy: $sha failed to start or /healthz did not report it within 60 s" >&2
   roll_back server
 fi
 
+if has_service "$sha" web; then
+  echo "ebay-deploy: starting the web service of $sha"
+  if ! web_up "$sha"; then
+    echo "ebay-deploy: the web service of $sha did not get healthy or did not report its SHA within 60 s" >&2
+    roll_back web
+  fi
+else
+  # A release from before v2 (Release 0, or a rollback by hand): a web service left by a newer
+  # release would keep serving sign-in and product edits that release no longer reads.
+  echo "ebay-deploy: $sha has no web service, stopping the web container"
+  stop_service web || echo "ebay-deploy: warning: could not stop the web container, check docker ps" >&2
+fi
+
 # Migrations are expand-only, so the old worker ran against the new schema until now.
-if has_worker "$sha"; then
+if has_service "$sha" worker; then
   echo "ebay-deploy: starting the worker of $sha"
   if ! worker_up "$sha"; then
     echo "ebay-deploy: the worker of $sha did not get healthy within 90 s" >&2
@@ -218,7 +281,7 @@ else
   # A release from before the worker (a rollback by hand to an older SHA): a worker left by a
   # newer release would keep polling eBay, calling Claude and sending email next to it.
   echo "ebay-deploy: $sha has no worker, stopping the worker container"
-  stop_worker || echo "ebay-deploy: warning: could not stop the worker container, check docker ps" >&2
+  stop_service worker || echo "ebay-deploy: warning: could not stop the worker container, check docker ps" >&2
 fi
 
 [[ -n "$running" ]] && echo "$running" >"$state/previous"

@@ -55,6 +55,12 @@ Versions from https://registry.npmjs.org/, 2026-10-19.
 - No upgrade path to a later pg-boss schema is built. It comes with the first pg-boss update.
 - The worker starts pg-boss with `migrate: false`; a missing or different schema version makes `start()` throw and the worker exit 1, so Compose marks it unhealthy and the deploy rolls back. The server does not start pg-boss in the MVP.
 
+**v2 amendment (2026-10-22, with ADR 0037 to 0040)**: two looser forms are allowed in expand migrations.
+
+- Outside `*_contract.sql` files, `migrations.test.ts` allows exactly two statements that contain `DROP`: `ALTER TABLE <t> DROP CONSTRAINT <c>, ADD CONSTRAINT <c> CHECK (...)` as one statement with the same constraint name (a check replaced by a wider one, for example `candidate_decision_known` gaining `wrong_product` and `held`), and `ALTER TABLE <t> ALTER COLUMN <c> DROP NOT NULL` (needed when Kleinanzeigen candidates arrive without a `listing_id`). Every other `DROP` or `RENAME` stays refused.
+- The test parses for these two forms. Review confirms that each replaced check accepts every row the old one accepted, so code of the previous release still runs on the new schema (the rollback rule of ADR 0029).
+- v2 migrations `0007` to `0011` add no product rows; migration `0006` stays untouched. No contract migration ships in v2; dropping `app.feed`, `app.segment_rule` and the `dashboard` role is a separate task after a 30-day rollback window.
+
 ## Alternatives considered
 
 - **Prisma 7**: own schema language, less control over migration SQL.
@@ -87,7 +93,7 @@ Versions from https://registry.npmjs.org/, 2026-10-19.
 
 - CI script enforces the pin rules above. Fails today: root `engines.node` is `>=24`.
 - CI: regenerating the Better Auth schema gives no diff; `drizzle-kit generate` on a clean tree writes nothing.
-- CI, from the first migration: reject DROP or RENAME outside contract migrations, and row writes in `ebay_live` migrations.
+- CI, from the first migration: reject DROP or RENAME outside contract migrations (except the two forms of the v2 amendment), and row writes in `ebay_live` migrations.
 - Integration test (Postgres 18): two parallel runners on an empty database both exit 0, nothing pending; from S4, server and worker start with `migrate: false` and `start()` throws if pg-boss migrations are pending.
 - Restore test (also the monthly drill): restore the ADR 0014 dump, migrate; four schemas and `drizzle` log exist, tables match a fresh migrate, `ebay_live` and job tables empty.
 - Lint: no `new PgBoss(` outside the queue wrapper. Reviews of `renovate.json` edits ask "ADR 0005 updated?".

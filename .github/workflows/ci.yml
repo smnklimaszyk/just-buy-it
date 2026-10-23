@@ -58,7 +58,11 @@ jobs:
         run: pnpm lint:root
 
       - name: Import rules
-        run: pnpm depcruise
+        run: |
+          pnpm depcruise
+          # Spec 10.4: no product words in the code. --affected may skip this package when a pull
+          # request touches only apps or packages, so it always runs.
+          pnpm --filter @ebay-sniper/no-product-literals test
 
       # ADR 0005: the committed migrations match the Drizzle schema.
       - name: Migrations are generated
@@ -99,6 +103,15 @@ jobs:
           SMTP_PASSWORD=ci-test-smtp-password
           ALERT_FROM=Just-Buy-It <info@intra-ai.de>
           ALERT_TO=info@example.test
+          POSTGRES_WEB_PASSWORD=0f1e2d3c4b5a69780f1e2d3c4b5a69780f1e2d3c4b5a69780f1e2d3c4b5a6978
+          AUTH_KEY=QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNDU=
+          AUTH_BOOTSTRAP_ADMINS=info@example.test
+          PUBLIC_ORIGIN=https://deals.intra-ai.de
+          LOGIN_SMTP_HOST=mail.example.test
+          LOGIN_SMTP_PORT=587
+          LOGIN_SMTP_USER=noreply@example.test
+          LOGIN_SMTP_PASSWORD=ci-test-login-smtp-password
+          LOGIN_FROM=Just-Buy-It <noreply@intra-ai.de>
           EOF
           rendered="$(docker compose -p ebay-sniper --env-file "$env_file" -f infra/docker-compose.yml \
             --profile migrate config --format json)"
@@ -107,8 +120,16 @@ jobs:
             echo "the worker's ALERT_FROM rendered as '$from'" >&2
             exit 1
           }
-          jq -e '.services.migrate.environment | has("POSTGRES_WORKER_PASSWORD") and has("POSTGRES_DASHBOARD_PASSWORD")' \
+          login_from="$(jq -r '.services.web.environment.LOGIN_FROM' <<<"$rendered")"
+          test "$login_from" = "Just-Buy-It <noreply@intra-ai.de>" || {
+            echo "web's LOGIN_FROM rendered as '$login_from'" >&2
+            exit 1
+          }
+          jq -e '.services.migrate.environment | has("POSTGRES_WORKER_PASSWORD") and has("POSTGRES_DASHBOARD_PASSWORD")
+            and has("POSTGRES_WEB_PASSWORD") and has("AUTH_BOOTSTRAP_ADMINS")' \
             <<<"$rendered" >/dev/null
+          # web never gets the alert mailbox's password (owner decision 2).
+          jq -e '.services.web.environment | has("SMTP_PASSWORD") | not' <<<"$rendered" >/dev/null
         env:
           GIT_SHA: 0123456789abcdef0123456789abcdef01234567
 
@@ -131,14 +152,16 @@ jobs:
             docker run --rm --network host -e DATABASE_URL="$TEST_DATABASE_URL" \
               -e POSTGRES_APP_PASSWORD="$POSTGRES_APP_PASSWORD" \
               -e POSTGRES_WORKER_PASSWORD="$POSTGRES_WORKER_PASSWORD" \
-              -e POSTGRES_DASHBOARD_PASSWORD="$POSTGRES_DASHBOARD_PASSWORD" -w /app/apps/ops \
+              -e POSTGRES_DASHBOARD_PASSWORD="$POSTGRES_DASHBOARD_PASSWORD" \
+              -e POSTGRES_WEB_PASSWORD="$POSTGRES_WEB_PASSWORD" \
+              -e AUTH_BOOTSTRAP_ADMINS="$AUTH_BOOTSTRAP_ADMINS" -w /app/apps/ops \
               ebay-sniper-server:ci node dist/main.js migrate
           done
           version="$(docker run --rm --network host "$POSTGRES_IMAGE" \
             psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -tAc 'SELECT version FROM pgboss.version')"
           test "$version" = 46 || { echo "pgboss.version is '$version', expected 46" >&2; exit 1; }
           docker run --rm --entrypoint sh ebay-sniper-server:ci -c '
-            for dir in packages/db packages/ebay packages/domain packages/llm packages/notify apps/worker; do
+            for dir in packages/db packages/ebay packages/domain packages/llm packages/notify apps/worker apps/web; do
               test ! -e "/app/$dir/dist/testing" || { echo "$dir/dist/testing ships in the image" >&2; exit 1; }
             done
             test ! -e /app/packages/llm/evals || { echo "packages/llm/evals ships in the image" >&2; exit 1; }'
@@ -147,8 +170,59 @@ jobs:
           POSTGRES_APP_PASSWORD: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           POSTGRES_WORKER_PASSWORD: fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
           POSTGRES_DASHBOARD_PASSWORD: 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+          POSTGRES_WEB_PASSWORD: 0f1e2d3c4b5a69780f1e2d3c4b5a69780f1e2d3c4b5a69780f1e2d3c4b5a6978
+          AUTH_BOOTSTRAP_ADMINS: info@example.test
           # The service container's image, so psql matches the server.
           POSTGRES_IMAGE: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+
+  # Spec 11.4 (rollback): Release 0, the rollback target, against a database migrated to this
+  # commit. Its poll, enrich, screen, send and dashboard tests write v2-shaped rows themselves
+  # (product keys p_..., the decisions wrong_product and held), so a v2 migration Release 0 cannot
+  # live with (a new NOT NULL, a check, a grant) fails here instead of during a real rollback.
+  rollback:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        env:
+          # A fixed test value for a throwaway service container, not a secret.
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Release 0 as deployed (530d6fa, PR #16).
+      RELEASE_0_SHA: 530d6fa97608dc033f04838f0f80ca2aaae30a8b
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Release 0's commit must be in the clone for git archive.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Release 0 tests on the migrations of this commit
+        run: |
+          release_0="$RUNNER_TEMP/release-0"
+          mkdir "$release_0"
+          git archive "$RELEASE_0_SHA" | tar -x -C "$release_0"
+          # Release 0's test templates are migrated with this commit's migrations.
+          cp -R packages/db/migrations/. "$release_0/packages/db/migrations/"
+          cd "$release_0"
+          pnpm install --frozen-lockfile
+          pnpm --filter "@ebay-sniper/worker^..." --filter "@ebay-sniper/server^..." run build
+          pnpm --filter @ebay-sniper/worker exec vitest run \
+            src/handlers/poll.test.ts src/handlers/enrich.test.ts src/handlers/screen.test.ts src/handlers/send.test.ts
+          pnpm --filter @ebay-sniper/server exec vitest run src/dashboard.test.ts
+          pnpm --filter @ebay-sniper/db exec vitest run src/dashboard.test.ts
 
   zizmor:
     runs-on: ubuntu-latest

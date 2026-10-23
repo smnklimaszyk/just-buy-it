@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildFeedSearch, endUserContext, type FeedSearchInput } from "./query.js";
+import {
+  buildCategorySearch,
+  buildFeedSearch,
+  buildMarketSearch,
+  endUserContext,
+  type FeedSearchInput,
+  type MarketSearchInput,
+} from "./query.js";
 
 const gpuPoll: FeedSearchInput = {
   q: "(3090,4090,rtx3090,rtx4090)",
@@ -117,5 +124,55 @@ describe("buildFeedSearch", () => {
     expect(() => buildFeedSearch({ ...gpuPoll, q: "q-sentinel|x" })).toThrow(
       expect.objectContaining({ message: expect.not.stringContaining("q-sentinel") }),
     );
+  });
+});
+
+const lensSnapshot: MarketSearchInput = {
+  q: "(85mm,portraitobjektiv)",
+  categoryId: "3323",
+  conditionIds: ["2750", "3000"],
+  postalCode: "80331",
+};
+
+describe("buildMarketSearch", () => {
+  it("builds the snapshot of spec 6.3: fixed price or Best Offer, DE, EUR, no price filter, newest first", () => {
+    const request = buildMarketSearch(lensSnapshot);
+
+    expect(request).toEqual({
+      q: "(85mm,portraitobjektiv)",
+      categoryIds: ["3323"],
+      filter: [
+        "buyingOptions:{FIXED_PRICE|BEST_OFFER}",
+        "conditionIds:{2750|3000}",
+        "deliveryCountry:DE",
+        "itemLocationCountry:DE",
+        "priceCurrency:EUR",
+      ],
+      sort: "newlyListed",
+      limit: 200,
+      endUserContext: "contextualLocation=country%3DDE%2Czip%3D80331",
+    });
+    expect(buildMarketSearch({ ...lensSnapshot, offset: 400 }).offset).toBe(400);
+  });
+
+  it("checks q, category, conditions, offset and postal code like the feed search", () => {
+    expect(() => buildMarketSearch({ ...lensSnapshot, q: "85mm portrait" })).toThrow(RangeError);
+    expect(() => buildMarketSearch({ ...lensSnapshot, q: `(${"a".repeat(98)},b)` })).toThrow(RangeError);
+    expect(() => buildMarketSearch({ ...lensSnapshot, categoryId: "3323,179" })).toThrow(RangeError);
+    expect(() => buildMarketSearch({ ...lensSnapshot, conditionIds: [] })).toThrow(RangeError);
+    expect(() => buildMarketSearch({ ...lensSnapshot, offset: -1 })).toThrow(RangeError);
+    expect(() => buildMarketSearch({ ...lensSnapshot, postalCode: "8033" })).toThrow(RangeError);
+  });
+});
+
+describe("buildCategorySearch", () => {
+  it("asks for the category refinements of the words: no category, one item, DE and EUR (spec 6.6)", () => {
+    expect(buildCategorySearch({ q: "(rennrad,carbon)" })).toEqual({
+      q: "(rennrad,carbon)",
+      filter: ["buyingOptions:{FIXED_PRICE|BEST_OFFER}", "deliveryCountry:DE", "itemLocationCountry:DE", "priceCurrency:EUR"],
+      limit: 1,
+      fieldgroups: ["CATEGORY_REFINEMENTS"],
+    });
+    expect(() => buildCategorySearch({ q: "rennrad -carbon" })).toThrow(RangeError);
   });
 });

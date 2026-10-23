@@ -27,7 +27,10 @@ const envExample = fileURLToPath(new URL("../../../.env.example", import.meta.ur
 // prints $FAKE_PING_MODE for the ping URL file and $FAKE_ENV_MODE for any other existing file.
 // timeout exits 124 without running its command when $FAKE_TIMEOUT=1. `config --services` prints
 // the top-level services of the -f file and fails when the file is missing. `up ... worker` fails
-// for SHAs in $FAKE_WORKER_FAIL and otherwise records the SHA in $FAKE_DIR/worker.
+// for SHAs in $FAKE_WORKER_FAIL and otherwise records the SHA in $FAKE_DIR/worker. `up ... web`
+// fails for SHAs in $FAKE_WEB_FAIL and otherwise records the SHA in $FAKE_DIR/web; curl answers
+// the web /healthz on 127.0.0.1:3141 with that SHA unless it is listed in $FAKE_BAD_WEB_HEALTH.
+// `stop` of the fake worker or web container removes its file.
 const fakes: Record<string, string> = {
   git: `#!/usr/bin/env bash
 echo "git $*" >> "$FAKE_DIR/log"
@@ -47,10 +50,16 @@ case "$1" in
     if [ "$FAKE_PS_FAIL" = "1" ]; then exit 1; fi
     case " $* " in
       *service=worker*) echo "fake-worker-container" ;;
+      *service=web*) echo "fake-web-container" ;;
       *) echo "fake-migrate-container" ;;
     esac
     exit 0 ;;
-  stop) exit 0 ;;
+  stop)
+    case "$2" in
+      fake-worker-container) rm -f "$FAKE_DIR/worker" ;;
+      fake-web-container) rm -f "$FAKE_DIR/web" ;;
+    esac
+    exit 0 ;;
 esac
 case " $* " in
   *" config --services "*)
@@ -62,13 +71,16 @@ case " $* " in
   *" up "*" worker ")
     case " $FAKE_WORKER_FAIL " in *" $GIT_SHA "*) exit 1 ;; esac
     echo "$GIT_SHA" > "$FAKE_DIR/worker" ;;
+  *" up "*" web ")
+    case " $FAKE_WEB_FAIL " in *" $GIT_SHA "*) exit 1 ;; esac
+    echo "$GIT_SHA" > "$FAKE_DIR/web" ;;
   *" run "*) if [ "$FAKE_MIGRATE_FAIL" = "1" ]; then exit "\${FAKE_MIGRATE_EXIT:-3}"; fi ;;
   *" build "*) case " $FAKE_BUILD_FAIL " in *" $GIT_SHA "*) exit 1 ;; esac ;;
   *" up "*" postgres ") if [ "$FAKE_POSTGRES_FAIL" = "1" ]; then exit 1; fi ;;
   *" up "*)
     case " $FAKE_COMPOSE_FAIL " in *" $GIT_SHA "*) exit 1 ;; esac
     echo "$GIT_SHA" > "$FAKE_DIR/served" ;;
-  *" down"*) rm -f "$FAKE_DIR/served" ;;
+  *" down"*) rm -f "$FAKE_DIR/served" "$FAKE_DIR/worker" "$FAKE_DIR/web" ;;
 esac
 `,
   curl: `#!/usr/bin/env bash
@@ -76,6 +88,12 @@ echo "curl $*" >> "$FAKE_DIR/log"
 case " $* " in
   *hc-ping*)
     if [ "$FAKE_PING_FAIL" = "1" ]; then echo "curl: (6) Could not resolve host: hc-ping.example.test" >&2; exit 6; fi
+    exit 0 ;;
+  *127.0.0.1:3141/healthz*)
+    [ -f "$FAKE_DIR/web" ] || exit 7
+    web=$(cat "$FAKE_DIR/web")
+    case " $FAKE_BAD_WEB_HEALTH " in *" $web "*) web=ffffffffffffffffffffffffffffffffffffffff ;; esac
+    printf '{"sha":"%s"}' "$web"
     exit 0 ;;
 esac
 [ -f "$FAKE_DIR/served" ] || exit 7
@@ -112,15 +130,21 @@ const appPassword = "0123456789abcdef".repeat(4);
 const probeCode = "Ab0_-".repeat(8);
 const workerPassword = "fedcba9876543210".repeat(4);
 const dashboardPassword = "00112233445566778899aabbccddeeff".repeat(2);
+const webPassword = "0f1e2d3c4b5a6978".repeat(4);
 // 32 bytes in base64, as `openssl rand -base64 32` prints them.
 const itemKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+const authKey = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNDU=";
 const baseEnvLines = [
   "POSTGRES_PASSWORD=00",
   `POSTGRES_APP_PASSWORD=${appPassword}`,
   `DELETION_PROBE_CODE=${probeCode}`,
   `POSTGRES_WORKER_PASSWORD=${workerPassword}`,
   `POSTGRES_DASHBOARD_PASSWORD=${dashboardPassword}`,
+  `POSTGRES_WEB_PASSWORD=${webPassword}`,
   `ITEM_KEY_V1=${itemKey}`,
+  `AUTH_KEY=${authKey}`,
+  "AUTH_BOOTSTRAP_ADMINS=admin@example.test",
+  "PUBLIC_ORIGIN=https://deals.intra-ai.de",
 ];
 const validEnv = `${baseEnvLines.join("\n")}\n`;
 // ALERT_FROM as on the host: an unquoted display name with the address.
@@ -130,6 +154,14 @@ const smtpLines = [
   "SMTP_USER=alerts@example.test",
   "SMTP_PASSWORD=not-a-real-password",
   "ALERT_FROM=Just-Buy-It <alerts@example.test>",
+];
+// The sign-in mailbox, separate from the alert mailbox (ADR 0038).
+const loginSmtpLines = [
+  "LOGIN_SMTP_HOST=mail.example.test",
+  "LOGIN_SMTP_PORT=587",
+  "LOGIN_SMTP_USER=noreply@example.test",
+  "LOGIN_SMTP_PASSWORD=not-a-real-login-password",
+  "LOGIN_FROM=Just-Buy-It <noreply@example.test>",
 ];
 const pingUrl = "https://hc-ping.example.test/0f3c2a1e-test-check";
 
@@ -197,10 +229,16 @@ function pings(): string[] {
     });
 }
 
-// A release tree whose compose file defines a worker service.
+// A release tree whose compose file defines a worker service, as Release 0.
 function withWorker(tree: string) {
   mkdirSync(join(tree, "infra"), { recursive: true });
   writeFileSync(join(tree, "infra", "docker-compose.yml"), "name: ebay-sniper\nservices:\n  server:\n  worker:\n");
+}
+
+// A release tree with the worker and the web service, as v2.
+function withWeb(tree: string) {
+  mkdirSync(join(tree, "infra"), { recursive: true });
+  writeFileSync(join(tree, "infra", "docker-compose.yml"), "name: ebay-sniper\nservices:\n  server:\n  worker:\n  web:\n");
 }
 
 function runningIs(sha: string) {
@@ -333,6 +371,7 @@ describe("ebay-deploy", () => {
     ["POSTGRES_DASHBOARD_PASSWORD", ""],
     ["POSTGRES_DASHBOARD_PASSWORD", `POSTGRES_DASHBOARD_PASSWORD=${dashboardPassword}0\n`],
     ["POSTGRES_DASHBOARD_PASSWORD", `POSTGRES_DASHBOARD_PASSWORD="${dashboardPassword}"\n`],
+    ["POSTGRES_WEB_PASSWORD", `POSTGRES_WEB_PASSWORD=${webPassword.slice(1)}\n`],
   ])("refuses a .env without a 64-character hex %s before any docker call: %j", (name, line) => {
     const others = baseEnvLines.filter((other) => !other.startsWith(`${name}=`));
     writeFileSync(join(root, ".env"), `${others.join("\n")}\n${line}`);
@@ -366,6 +405,86 @@ describe("ebay-deploy", () => {
     expect(pings()).toEqual([]);
   });
 
+  it("refuses a .env without a 44-character base64 AUTH_KEY before any docker call, without printing the key", () => {
+    const others = baseEnvLines.filter((other) => !other.startsWith("AUTH_KEY="));
+    writePingFile();
+    for (const line of ["", "AUTH_KEY=\n", `AUTH_KEY=${authKey.slice(1)}\n`, `AUTH_KEY=${authKey}A\n`, `AUTH_KEY="${authKey}"\n`]) {
+      writeFileSync(join(root, ".env"), `${others.join("\n")}\n${line}`);
+
+      const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB });
+
+      expect(status).toBe(1);
+      expect(output).toContain(`${root}/.env must set AUTH_KEY to 44 base64 characters (openssl rand -base64 32)`);
+      expect(output).not.toContain(authKey.slice(1, -1));
+    }
+    expect(calls("docker")).toEqual([]);
+    expect(pings()).toEqual([]);
+  });
+
+  it("refuses a .env without a comma list of addresses in AUTH_BOOTSTRAP_ADMINS before any docker call", () => {
+    const others = baseEnvLines.filter((other) => !other.startsWith("AUTH_BOOTSTRAP_ADMINS="));
+    writePingFile();
+    for (const value of [
+      null,
+      "",
+      "simon",
+      "admin@example.test,",
+      "admin@example.test,,editor@example.test",
+      "admin@example.test, editor@example.test",
+      "admin@@example.test",
+      '"admin@example.test"',
+    ]) {
+      const line = value === null ? "" : `AUTH_BOOTSTRAP_ADMINS=${value}\n`;
+      writeFileSync(join(root, ".env"), `${others.join("\n")}\n${line}`);
+
+      const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB });
+
+      expect(status, value ?? "no line").toBe(1);
+      expect(output).toContain(`${root}/.env must set AUTH_BOOTSTRAP_ADMINS to one or more addresses, separated by commas without spaces`);
+    }
+    expect(calls("docker")).toEqual([]);
+    expect(pings()).toEqual([]);
+  });
+
+  it("deploys with two bootstrap admins", () => {
+    const others = baseEnvLines.filter((other) => !other.startsWith("AUTH_BOOTSTRAP_ADMINS="));
+    writeFileSync(join(root, ".env"), `${others.join("\n")}\nAUTH_BOOTSTRAP_ADMINS=admin@example.test,second.admin@example.test\n`);
+
+    const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB });
+
+    expect(status).toBe(0);
+    expect(output).toContain(`${shaB} is live`);
+  });
+
+  // The web service compares the Origin header with it exactly (spec 7.6), and the route file only
+  // serves deals.intra-ai.de, so any other value breaks every form post (ADR 0029, v2 additions).
+  it("refuses a .env whose PUBLIC_ORIGIN is not exactly https://deals.intra-ai.de before any docker call", () => {
+    const others = baseEnvLines.filter((other) => !other.startsWith("PUBLIC_ORIGIN="));
+    writePingFile();
+    for (const value of [
+      null,
+      "",
+      "http://deals.intra-ai.de",
+      "https://deals.intra-ai.de/",
+      "https://deals.intra-ai.de/login",
+      "https://Deals.intra-ai.de",
+      "https://deals.intra-ai.de:443",
+      "https://deals.intra-ai.com",
+      "deals.intra-ai.de",
+      '"https://deals.intra-ai.de"',
+    ]) {
+      const line = value === null ? "" : `PUBLIC_ORIGIN=${value}\n`;
+      writeFileSync(join(root, ".env"), `${others.join("\n")}\n${line}`);
+
+      const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB });
+
+      expect(status, value ?? "no line").toBe(1);
+      expect(output).toContain(`${root}/.env must set PUBLIC_ORIGIN=https://deals.intra-ai.de exactly, without a path or a trailing slash`);
+    }
+    expect(calls("docker")).toEqual([]);
+    expect(pings()).toEqual([]);
+  });
+
   it.each([
     [["SMTP_HOST"], "SMTP_PORT, SMTP_USER, SMTP_PASSWORD, ALERT_FROM"],
     [["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD"], "ALERT_FROM"],
@@ -386,6 +505,36 @@ describe("ebay-deploy", () => {
     expect(pings()).toEqual([]);
   });
 
+  it("refuses a partial LOGIN_SMTP set before any docker call, naming the missing variables", () => {
+    writePingFile();
+    // A name ending in "=" is written with an empty value, which counts as absent.
+    for (const [names, missing] of [
+      [["LOGIN_SMTP_HOST"], "LOGIN_SMTP_PORT, LOGIN_SMTP_USER, LOGIN_SMTP_PASSWORD, LOGIN_FROM"],
+      [["LOGIN_SMTP_HOST", "LOGIN_SMTP_PORT", "LOGIN_SMTP_USER", "LOGIN_SMTP_PASSWORD"], "LOGIN_FROM"],
+      [["LOGIN_SMTP_HOST", "LOGIN_SMTP_PORT", "LOGIN_SMTP_USER", "LOGIN_FROM", "LOGIN_SMTP_PASSWORD="], "LOGIN_SMTP_PASSWORD"],
+    ] as const) {
+      const smtp = names.map((name) => (name.endsWith("=") ? name : loginSmtpLines.find((line) => line.startsWith(`${name}=`))));
+      writeFileSync(join(root, ".env"), `${validEnv}${smtp.join("\n")}\n`);
+
+      const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB });
+
+      expect(status).toBe(1);
+      expect(output).toContain(`${root}/.env sets LOGIN_SMTP partially, missing ${missing} (set all five or none)`);
+      expect(output).not.toContain("not-a-real-login-password");
+    }
+    expect(calls("docker")).toEqual([]);
+    expect(pings()).toEqual([]);
+  });
+
+  it("deploys with all five LOGIN_SMTP values next to the five alert SMTP values", () => {
+    writeFileSync(join(root, ".env"), `${validEnv}${[...smtpLines, ...loginSmtpLines].join("\n")}\n`);
+
+    const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB });
+
+    expect(status).toBe(0);
+    expect(output).toContain(`${shaB} is live`);
+  });
+
   it.each([
     ["all five SMTP values", smtpLines.join("\n")],
     ["no SMTP value", ""],
@@ -397,6 +546,25 @@ describe("ebay-deploy", () => {
 
     expect(status).toBe(0);
     expect(output).toContain(`${shaB} is live`);
+  });
+
+  // Spec 10.4: the model is the claude.model setting now; the worker ignores the old variable.
+  it("warns about a leftover CLAUDE_MODEL without refusing, and stays quiet for an empty one", () => {
+    writeFileSync(join(root, ".env"), `${validEnv}CLAUDE_MODEL=claude-sonnet-5-5\n`);
+
+    const set = deploy(shaB, { FAKE_MAIN_SHAS: shaB });
+
+    expect(set.status).toBe(0);
+    expect(set.output).toContain(
+      `ebay-deploy: warning: ${root}/.env still sets CLAUDE_MODEL, which nothing reads since the model became the claude.model setting; remove the line`,
+    );
+    expect(set.output).toContain(`${shaB} is live`);
+
+    writeFileSync(join(root, ".env"), `${validEnv}CLAUDE_MODEL=\n`);
+    const empty = deploy(shaA, { FAKE_MAIN_SHAS: shaA });
+
+    expect(empty.status).toBe(0);
+    expect(empty.output).not.toContain("CLAUDE_MODEL");
   });
 
   it("exits 0 without git or docker when the SHA is already running", () => {
@@ -427,7 +595,7 @@ describe("ebay-deploy", () => {
 
     expect(status).toBe(0);
     expect(output).toContain(`${shaB} is live`);
-    expect(calls("docker").at(-4)).toBe(
+    expect(calls("docker").find((line) => line.includes(" up -d --build "))).toBe(
       `docker GIT_SHA=${shaB} compose -p ebay-sniper --env-file ${root}/.env -f ${root}/releases/${shaB}/infra/docker-compose.yml up -d --build --wait --wait-timeout 120 server`,
     );
     expect(calls("curl")[0]).toContain("https://deals.example.test/healthz");
@@ -447,11 +615,16 @@ describe("ebay-deploy", () => {
     // A worker left by a newer release (a rollback by hand to an older SHA) must not keep polling
     // eBay and sending email next to the older server.
     expect(output).toContain(`${shaB} has no worker, stopping the worker container`);
+    // The same for a web service left by a v2 release.
+    expect(output).toContain(`${shaB} has no web service, stopping the web container`);
     expect(calls("docker")).toEqual([
       `docker GIT_SHA=${shaB} ${compose} build server`,
       `docker GIT_SHA=${shaB} ${compose} up -d --wait --wait-timeout 120 postgres`,
       `docker GIT_SHA=${shaB} ${compose} run --rm --no-deps -T migrate`,
       `docker GIT_SHA=${shaB} ${compose} up -d --build --wait --wait-timeout 120 server`,
+      `docker GIT_SHA=${shaB} ${compose} config --services`,
+      "docker GIT_SHA= ps -q --filter label=com.docker.compose.project=ebay-sniper --filter label=com.docker.compose.service=web",
+      "docker GIT_SHA= stop fake-web-container",
       `docker GIT_SHA=${shaB} ${compose} config --services`,
       "docker GIT_SHA= ps -q --filter label=com.docker.compose.project=ebay-sniper --filter label=com.docker.compose.service=worker",
       "docker GIT_SHA= stop fake-worker-container",
@@ -464,6 +637,7 @@ describe("ebay-deploy", () => {
     const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB, FAKE_PS_FAIL: "1" });
 
     expect(status).toBe(0);
+    expect(output).toContain("could not stop the web container, check docker ps");
     expect(output).toContain("could not stop the worker container, check docker ps");
     expect(output).toContain(`${shaB} is live`);
   });
@@ -483,6 +657,9 @@ describe("ebay-deploy", () => {
         `docker GIT_SHA=${shaB} ${compose} run --rm --no-deps -T migrate`,
         `docker GIT_SHA=${shaB} ${compose} up -d --build --wait --wait-timeout 120 server`,
         `docker GIT_SHA=${shaB} ${compose} config --services`,
+        "docker GIT_SHA= ps -q --filter label=com.docker.compose.project=ebay-sniper --filter label=com.docker.compose.service=web",
+        "docker GIT_SHA= stop fake-web-container",
+        `docker GIT_SHA=${shaB} ${compose} config --services`,
         `docker GIT_SHA=${shaB} ${compose} up -d --no-deps --wait --wait-timeout 90 worker`,
       ]);
       const log = readFileSync(join(fakeDir, "log"), "utf8").split("\n");
@@ -494,9 +671,9 @@ describe("ebay-deploy", () => {
       expect(readFileSync(join(root, "state", "running"), "utf8").trim()).toBe(shaB);
     });
 
-    it("rolls back the server and the worker to the previous release when the worker does not get healthy", () => {
-      withWorker(join(fakeDir, "tree"));
-      withWorker(join(root, "releases", shaA));
+    it("rolls back the server, web and the worker to the previous release when the worker does not get healthy", () => {
+      withWeb(join(fakeDir, "tree"));
+      withWeb(join(root, "releases", shaA));
       writePingFile();
       runningIs(shaA);
       writeFileSync(join(fakeDir, "served"), `${shaA}\n`);
@@ -507,12 +684,15 @@ describe("ebay-deploy", () => {
       expect(status).toBe(1);
       expect(output).toContain(`the worker of ${shaB} did not get healthy within 90 s`);
       expect(output).toContain(`deploy of ${shaB} failed, rolled back to ${shaA}`);
-      expect(calls("docker").slice(-3)).toEqual([
+      expect(calls("docker").slice(-5)).toEqual([
         `docker GIT_SHA=${shaA} ${composeA} up -d --build --wait --wait-timeout 120 server`,
+        `docker GIT_SHA=${shaA} ${composeA} config --services`,
+        `docker GIT_SHA=${shaA} ${composeA} up -d --no-deps --wait --wait-timeout 60 web`,
         `docker GIT_SHA=${shaA} ${composeA} config --services`,
         `docker GIT_SHA=${shaA} ${composeA} up -d --no-deps --wait --wait-timeout 90 worker`,
       ]);
       expect(readFileSync(join(fakeDir, "served"), "utf8").trim()).toBe(shaA);
+      expect(readFileSync(join(fakeDir, "web"), "utf8").trim()).toBe(shaA);
       expect(readFileSync(join(fakeDir, "worker"), "utf8").trim()).toBe(shaA);
       expect(readFileSync(join(root, "state", "running"), "utf8").trim()).toBe(shaA);
       expect(existsSync(join(root, "state", "previous"))).toBe(false);
@@ -534,8 +714,8 @@ describe("ebay-deploy", () => {
       expect(readFileSync(join(root, "state", "running"), "utf8").trim()).toBe(shaA);
     });
 
-    it("rolls back the server and stops the worker container when the previous release has no worker", () => {
-      withWorker(join(fakeDir, "tree"));
+    it("rolls back the server and stops the web and worker containers when the previous release has neither", () => {
+      withWeb(join(fakeDir, "tree"));
       mkdirSync(join(root, "releases", shaA, "infra"), { recursive: true });
       writeFileSync(join(root, "releases", shaA, "infra", "docker-compose.yml"), "name: ebay-sniper\nservices:\n  server:\n");
       runningIs(shaA);
@@ -545,14 +725,19 @@ describe("ebay-deploy", () => {
       const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB, FAKE_WORKER_FAIL: shaB });
 
       expect(status).toBe(1);
+      expect(output).toContain(`${shaA} has no web service, stopping the web container`);
       expect(output).toContain(`${shaA} has no worker, stopping the worker container`);
       expect(output).toContain(`deploy of ${shaB} failed, rolled back to ${shaA}`);
-      expect(calls("docker").slice(-4)).toEqual([
+      expect(calls("docker").slice(-7)).toEqual([
         `docker GIT_SHA=${shaA} ${composeA} up -d --build --wait --wait-timeout 120 server`,
+        `docker GIT_SHA=${shaA} ${composeA} config --services`,
+        "docker GIT_SHA= ps -q --filter label=com.docker.compose.project=ebay-sniper --filter label=com.docker.compose.service=web",
+        "docker GIT_SHA= stop fake-web-container",
         `docker GIT_SHA=${shaA} ${composeA} config --services`,
         "docker GIT_SHA= ps -q --filter label=com.docker.compose.project=ebay-sniper --filter label=com.docker.compose.service=worker",
         "docker GIT_SHA= stop fake-worker-container",
       ]);
+      expect(existsSync(join(fakeDir, "web"))).toBe(false);
       expect(readFileSync(join(fakeDir, "served"), "utf8").trim()).toBe(shaA);
       expect(readFileSync(join(root, "state", "running"), "utf8").trim()).toBe(shaA);
     });
@@ -577,6 +762,137 @@ describe("ebay-deploy", () => {
       writeFileSync(join(fakeDir, "served"), `${shaA}\n`);
 
       const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB, FAKE_WORKER_FAIL: `${shaB} ${shaA}` });
+
+      expect(status).toBe(1);
+      expect(output).toContain(`deploy of ${shaB} failed and the rollback to ${shaA} failed too, check the host now`);
+      expect(readFileSync(join(root, "state", "running"), "utf8").trim()).toBe(shaA);
+      expect(pings()).toEqual([`${pingUrl}/start`, `${pingUrl}/fail`]);
+    });
+  });
+
+  describe("web", () => {
+    const composeOf = (sha: string) =>
+      `compose -p ebay-sniper --env-file ${root}/.env -f ${root}/releases/${sha}/infra/docker-compose.yml`;
+
+    it("starts web after the server, checks its SHA on 127.0.0.1:3141, then starts the worker", () => {
+      withWeb(join(fakeDir, "tree"));
+
+      const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB });
+
+      expect(status, output).toBe(0);
+      expect(output).toContain(`${shaB} is live`);
+      expect(calls("docker").slice(3)).toEqual([
+        `docker GIT_SHA=${shaB} ${composeOf(shaB)} up -d --build --wait --wait-timeout 120 server`,
+        `docker GIT_SHA=${shaB} ${composeOf(shaB)} config --services`,
+        `docker GIT_SHA=${shaB} ${composeOf(shaB)} up -d --no-deps --wait --wait-timeout 60 web`,
+        `docker GIT_SHA=${shaB} ${composeOf(shaB)} config --services`,
+        `docker GIT_SHA=${shaB} ${composeOf(shaB)} up -d --no-deps --wait --wait-timeout 90 worker`,
+      ]);
+      const log = readFileSync(join(fakeDir, "log"), "utf8").split("\n");
+      const publicHealth = log.findIndex((line) => line.startsWith("curl ") && line.includes("deals.example.test/healthz"));
+      const webUp = log.findIndex((line) => line.endsWith(" web"));
+      const webHealth = log.findIndex((line) => line === "curl -fsS --max-time 2 http://127.0.0.1:3141/healthz");
+      const workerUp = log.findIndex((line) => line.endsWith(" worker"));
+      expect(publicHealth).toBeGreaterThan(-1);
+      expect(publicHealth).toBeLessThan(webUp);
+      expect(webUp).toBeLessThan(webHealth);
+      expect(webHealth).toBeLessThan(workerUp);
+      expect(readFileSync(join(fakeDir, "web"), "utf8").trim()).toBe(shaB);
+      expect(readFileSync(join(fakeDir, "worker"), "utf8").trim()).toBe(shaB);
+    });
+
+    it("rolls back the server and web together when the new web /healthz does not report the SHA, without touching the worker", () => {
+      withWeb(join(fakeDir, "tree"));
+      withWeb(join(root, "releases", shaA));
+      writePingFile();
+      runningIs(shaA);
+      writeFileSync(join(fakeDir, "served"), `${shaA}\n`);
+      writeFileSync(join(fakeDir, "web"), `${shaA}\n`);
+      writeFileSync(join(fakeDir, "worker"), `${shaA}\n`);
+
+      const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB, FAKE_BAD_WEB_HEALTH: shaB });
+
+      expect(status).toBe(1);
+      expect(output).toContain(`the web service of ${shaB} did not get healthy or did not report its SHA within 60 s`);
+      expect(output).toContain(`deploy of ${shaB} failed, rolled back to ${shaA}`);
+      expect(calls("docker").slice(-3)).toEqual([
+        `docker GIT_SHA=${shaA} ${composeOf(shaA)} up -d --build --wait --wait-timeout 120 server`,
+        `docker GIT_SHA=${shaA} ${composeOf(shaA)} config --services`,
+        `docker GIT_SHA=${shaA} ${composeOf(shaA)} up -d --no-deps --wait --wait-timeout 60 web`,
+      ]);
+      expect(calls("docker").filter((line) => line.endsWith(" worker"))).toEqual([]);
+      expect(readFileSync(join(fakeDir, "served"), "utf8").trim()).toBe(shaA);
+      expect(readFileSync(join(fakeDir, "web"), "utf8").trim()).toBe(shaA);
+      expect(readFileSync(join(fakeDir, "worker"), "utf8").trim()).toBe(shaA);
+      expect(readFileSync(join(root, "state", "running"), "utf8").trim()).toBe(shaA);
+      expect(pings()).toEqual([`${pingUrl}/start`, `${pingUrl}/fail`]);
+    });
+
+    it("rolls back to Release 0 by stopping web when the new web does not get healthy and the running release has no web", () => {
+      withWeb(join(fakeDir, "tree"));
+      withWorker(join(root, "releases", shaA));
+      runningIs(shaA);
+      writeFileSync(join(fakeDir, "served"), `${shaA}\n`);
+      writeFileSync(join(fakeDir, "worker"), `${shaA}\n`);
+
+      const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB, FAKE_WEB_FAIL: shaB });
+
+      expect(status).toBe(1);
+      expect(output).toContain(`${shaA} has no web service, stopping the web container`);
+      expect(output).toContain(`deploy of ${shaB} failed, rolled back to ${shaA}`);
+      expect(calls("docker").slice(-4)).toEqual([
+        `docker GIT_SHA=${shaA} ${composeOf(shaA)} up -d --build --wait --wait-timeout 120 server`,
+        `docker GIT_SHA=${shaA} ${composeOf(shaA)} config --services`,
+        "docker GIT_SHA= ps -q --filter label=com.docker.compose.project=ebay-sniper --filter label=com.docker.compose.service=web",
+        "docker GIT_SHA= stop fake-web-container",
+      ]);
+      // Release 0's worker kept running throughout.
+      expect(readFileSync(join(fakeDir, "worker"), "utf8").trim()).toBe(shaA);
+      expect(readFileSync(join(root, "state", "running"), "utf8").trim()).toBe(shaA);
+    });
+
+    // Spec 11.6: `ebay-deploy <sha R0>` is the rollback from v2.
+    it("stops web and starts the older worker when it deploys a release without web over a v2 release", () => {
+      withWorker(join(fakeDir, "tree"));
+      withWeb(join(root, "releases", shaA));
+      runningIs(shaA);
+      writeFileSync(join(fakeDir, "served"), `${shaA}\n`);
+      writeFileSync(join(fakeDir, "web"), `${shaA}\n`);
+      writeFileSync(join(fakeDir, "worker"), `${shaA}\n`);
+
+      const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB });
+
+      expect(status).toBe(0);
+      expect(output).toContain(`${shaB} has no web service, stopping the web container`);
+      expect(output).toContain(`${shaB} is live`);
+      expect(existsSync(join(fakeDir, "web"))).toBe(false);
+      expect(readFileSync(join(fakeDir, "served"), "utf8").trim()).toBe(shaB);
+      expect(readFileSync(join(fakeDir, "worker"), "utf8").trim()).toBe(shaB);
+      expect(readFileSync(join(root, "state", "running"), "utf8").trim()).toBe(shaB);
+      expect(readFileSync(join(root, "state", "previous"), "utf8").trim()).toBe(shaA);
+    });
+
+    it("stops the new containers when web of a first deploy does not get healthy", () => {
+      withWeb(join(fakeDir, "tree"));
+
+      const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB, FAKE_WEB_FAIL: shaB });
+
+      expect(status).toBe(1);
+      expect(output).toContain(`the web service of ${shaB} did not get healthy or did not report its SHA within 60 s`);
+      expect(output).toContain("no previous release, stopped the new containers");
+      expect(calls("docker").at(-1)).toBe("docker GIT_SHA= compose -p ebay-sniper down");
+      expect(calls("docker").filter((line) => line.endsWith(" worker"))).toEqual([]);
+      expect(existsSync(join(root, "state", "running"))).toBe(false);
+    });
+
+    it("reports a failed rollback when the previous web does not come back either", () => {
+      withWeb(join(fakeDir, "tree"));
+      withWeb(join(root, "releases", shaA));
+      writePingFile();
+      runningIs(shaA);
+      writeFileSync(join(fakeDir, "served"), `${shaA}\n`);
+
+      const { status, output } = deploy(shaB, { FAKE_MAIN_SHAS: shaB, FAKE_BAD_WEB_HEALTH: `${shaB} ${shaA}` });
 
       expect(status).toBe(1);
       expect(output).toContain(`deploy of ${shaB} failed and the rollback to ${shaA} failed too, check the host now`);
@@ -887,22 +1203,20 @@ describe("docker-compose.yml", () => {
       "EBAY_CLIENT_SECRET",
       "DELETION_PROBE_CODE",
       "DATABASE_URL",
-      "DASHBOARD_PORT",
-      "DASHBOARD_DATABASE_URL",
     ]);
     expect(server.join("\n")).not.toContain("${POSTGRES_PASSWORD");
   });
 
-  it("publishes the dashboard listener on 127.0.0.1:3142 only, as the dashboard role", () => {
+  // Spec 10.4: the web service replaces the old dashboard; its listener, its two variables and
+  // its port 3142 are gone.
+  it("publishes only 127.0.0.1:3140 for the server, no longer the dashboard port 3142", () => {
     const server = composeService("server");
 
-    expect(server).toContain('      DASHBOARD_PORT: "3001"');
-    expect(server).toContain(
-      "      DASHBOARD_DATABASE_URL: postgres://dashboard:${POSTGRES_DASHBOARD_PASSWORD:?POSTGRES_DASHBOARD_PASSWORD is required}@postgres:5432/ebay_sniper",
-    );
+    expect(server.join("\n")).not.toContain("DASHBOARD");
     const start = server.indexOf("    ports:");
-    expect(server.slice(start + 1, start + 3)).toEqual(['      - "127.0.0.1:3140:3000"', '      - "127.0.0.1:3142:3001"']);
-    expect(server[start + 3]).not.toMatch(/^ {6}- /);
+    expect(server[start + 1]).toBe('      - "127.0.0.1:3140:3000"');
+    expect(server[start + 2]).not.toMatch(/^ {6}- /);
+    expect(readFileSync(composeFile, "utf8")).not.toContain("3142");
   });
 
   it("connects the server as the app role and requires its password and the probe code", () => {
@@ -942,7 +1256,6 @@ describe("docker-compose.yml", () => {
       "ITEM_KEY_V1",
       "BUYER_PROFILE",
       "ANTHROPIC_API_KEY",
-      "CLAUDE_MODEL",
       "CLAUDE_DAILY_CALL_LIMIT",
       "CLAUDE_DAILY_SPEND_LIMIT_USD",
       "SMTP_HOST",
@@ -963,7 +1276,17 @@ describe("docker-compose.yml", () => {
     for (const name of ["ANTHROPIC_API_KEY", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "ALERT_FROM"]) {
       expect(worker).toContain(`      ${name}: \${${name}:-}`);
     }
-    for (const other of ["${POSTGRES_PASSWORD", "POSTGRES_APP_PASSWORD", "POSTGRES_DASHBOARD_PASSWORD", "DELETION_"]) {
+    // CLAUDE_MODEL: the model is the claude.model setting (spec 10.4). The rest are other services'.
+    for (const other of [
+      "${POSTGRES_PASSWORD",
+      "POSTGRES_APP_PASSWORD",
+      "POSTGRES_DASHBOARD_PASSWORD",
+      "POSTGRES_WEB_PASSWORD",
+      "DELETION_",
+      "CLAUDE_MODEL",
+      "AUTH_KEY",
+      "LOGIN_SMTP",
+    ]) {
       expect(text).not.toContain(other);
     }
   });
@@ -995,7 +1318,93 @@ describe("docker-compose.yml", () => {
     }
   });
 
-  it("gives the migrate service the owner URL and the app role password", () => {
+  // Spec 7.1 and 9.1: the admin UI and sign-in, as role web, with the secrets it needs and no other.
+  it("runs web from the server image with an explicit variable list, as the web role", () => {
+    const web = composeService("web");
+    const text = web.join("\n");
+
+    expect(web).toContain("    image: ebay-sniper-server:${GIT_SHA:?GIT_SHA is required}");
+    expect(web).toContain("    working_dir: /app/apps/web");
+    expect(web).toContain('    command: ["node", "dist/main.js"]');
+    expect(web.some((line) => line.includes("env_file") || line.trim().startsWith("build:"))).toBe(false);
+    expect(environmentKeys(web)).toEqual([
+      "PORT",
+      "TZ",
+      "DATABASE_URL",
+      "AUTH_KEY",
+      "PUBLIC_ORIGIN",
+      "ALERT_TO",
+      "BUYER_PROFILE",
+      "CLAUDE_DAILY_CALL_LIMIT",
+      "CLAUDE_DAILY_SPEND_LIMIT_USD",
+      "LOGIN_SMTP_HOST",
+      "LOGIN_SMTP_PORT",
+      "LOGIN_SMTP_USER",
+      "LOGIN_SMTP_PASSWORD",
+      "LOGIN_FROM",
+      "LOG_LEVEL",
+      "NODE_OPTIONS",
+    ]);
+    expect(web).toContain('      PORT: "3000"');
+    expect(web).toContain(
+      "      DATABASE_URL: postgres://web:${POSTGRES_WEB_PASSWORD:?POSTGRES_WEB_PASSWORD is required}@postgres:5432/ebay_sniper",
+    );
+    for (const name of ["AUTH_KEY", "PUBLIC_ORIGIN", "ALERT_TO"]) {
+      expect(web).toContain(`      ${name}: \${${name}:?${name} is required}`);
+    }
+    for (const name of ["CLAUDE_DAILY_CALL_LIMIT", "CLAUDE_DAILY_SPEND_LIMIT_USD", "LOGIN_SMTP_HOST", "LOGIN_SMTP_PASSWORD", "LOGIN_FROM"]) {
+      expect(web).toContain(`      ${name}: \${${name}:-}`);
+    }
+    // Never the owner, another role's password, the alert mailbox, Claude, eBay or the item key.
+    for (const other of [
+      "${POSTGRES_PASSWORD",
+      "POSTGRES_APP_PASSWORD",
+      "POSTGRES_WORKER_PASSWORD",
+      "POSTGRES_DASHBOARD_PASSWORD",
+      "${SMTP_",
+      "ALERT_FROM",
+      "ANTHROPIC_API_KEY",
+      "EBAY_",
+      "ITEM_KEY_V1",
+      "DELETION_",
+    ]) {
+      expect(text).not.toContain(other);
+    }
+  });
+
+  it("publishes web on 127.0.0.1:3141 only, hardens it and checks its /healthz", () => {
+    const web = composeService("web");
+
+    const start = web.indexOf("    ports:");
+    expect(start).toBeGreaterThan(-1);
+    expect(web[start + 1]).toBe('      - "127.0.0.1:3141:3000"');
+    expect(web[start + 2]).not.toMatch(/^ {6}- /);
+    for (const line of [
+      "    read_only: true",
+      "      - /tmp",
+      "      - ALL",
+      "      - no-new-privileges:true",
+      "    mem_limit: 192m",
+      "      NODE_OPTIONS: --max-old-space-size=115",
+      "    restart: unless-stopped",
+      "        condition: service_healthy",
+      '      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]',
+      "      interval: 10s",
+      "      timeout: 3s",
+      "      retries: 3",
+      "      start_period: 20s",
+      // SIGTERM: running requests and queued sign-in mail finish (two 10 s tries 30 s apart).
+      "    stop_grace_period: 60s",
+      "        max-size: 10m",
+      '        max-file: "3"',
+    ]) {
+      expect(web).toContain(line);
+    }
+  });
+
+  // The ops CLI runs in this service too (runbook section 0): products and settings need the
+  // Claude ceilings, `ops auth code` and `ops auth unlock` the sign-in key.
+  it("gives the migrate service the owner URL, the role passwords, the bootstrap admins and what the ops CLI reads", () => {
     const migrate = composeService("migrate");
 
     expect(environmentKeys(migrate)).toEqual([
@@ -1003,12 +1412,23 @@ describe("docker-compose.yml", () => {
       "POSTGRES_APP_PASSWORD",
       "POSTGRES_WORKER_PASSWORD",
       "POSTGRES_DASHBOARD_PASSWORD",
+      "POSTGRES_WEB_PASSWORD",
+      "AUTH_BOOTSTRAP_ADMINS",
+      "AUTH_KEY",
+      "CLAUDE_DAILY_CALL_LIMIT",
+      "CLAUDE_DAILY_SPEND_LIMIT_USD",
+      "BUYER_PROFILE",
       "TZ",
     ]);
     expect(migrate).toContain(
       "      DATABASE_URL: postgres://ebay_sniper:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/ebay_sniper",
     );
-    expect(migrate).toContain("      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}");
+    for (const name of ["POSTGRES_APP_PASSWORD", "POSTGRES_WEB_PASSWORD", "AUTH_BOOTSTRAP_ADMINS", "AUTH_KEY"]) {
+      expect(migrate).toContain(`      ${name}: \${${name}:?${name} is required}`);
+    }
+    for (const name of ["CLAUDE_DAILY_CALL_LIMIT", "CLAUDE_DAILY_SPEND_LIMIT_USD", "BUYER_PROFILE"]) {
+      expect(migrate).toContain(`      ${name}: \${${name}:-}`);
+    }
   });
 });
 
@@ -1032,8 +1452,14 @@ describe(".env.example", () => {
       "ANTHROPIC_API_KEY",
       "SMTP_HOST",
       "ALERT_TO",
+      "POSTGRES_WEB_PASSWORD",
+      "AUTH_KEY",
+      "AUTH_BOOTSTRAP_ADMINS",
+      "PUBLIC_ORIGIN",
+      "LOGIN_SMTP_HOST",
+      "LOGIN_FROM",
     ]) {
-      const index = lines.indexOf(`${name}=`);
+      const index = lines.findIndex((line) => line.startsWith(`${name}=`));
       expect(index).toBeGreaterThan(0);
       expect(lines[index - 1]).toMatch(/^# /);
     }

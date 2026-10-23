@@ -57,6 +57,21 @@ describe("purge handler (section 7.3)", () => {
     expect(log.text()).not.toContain("Founders");
   });
 
+  it("logs a failed v2 step with its SQL state and still finishes the job (spec 2.10)", async () => {
+    await db.admin.query("REVOKE DELETE ON auth.rate_counter FROM worker");
+    const log = createTestLog();
+    try {
+      const purge = createPurgeHandler({ pool: db.pool, clock: createTestClock(NOW), log: log.log });
+
+      await purge({}, job);
+    } finally {
+      await db.admin.query("GRANT DELETE ON auth.rate_counter TO worker");
+    }
+
+    expect(log.events("purge_step")).toEqual([{ event: "purge_step", step: "rate_counter", status: "error", sql_state: "42501" }]);
+    expect(log.events("purge")).toMatchObject([{ event: "purge", status: "ok", counts: { auth_event: 0 } }]);
+  });
+
   it("logs a failed purge with its SQL state, then fails the job", async () => {
     await listing(1, NOW);
     // As role dashboard: no DELETE on the content tables.

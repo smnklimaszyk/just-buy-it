@@ -1,0 +1,40 @@
+{
+  "id": "23-pram-fox-3-below-market",
+  "set": "v2",
+  "group": "legitimate",
+  "product_kind": "other",
+  "product": {
+    "name": "Bugaboo Fox 3 pram",
+    "description": "A used Bugaboo Fox 3 pram with chassis, bassinet and seat unit, complete and working.",
+    "must_contain": [["bugaboo"], ["fox 3", "fox3"]],
+    "must_not_contain": ["defekt"],
+    "conditions": ["used"],
+    "limit_eur": 560,
+    "market_value_eur": 700,
+    "market_value_status": "ok"
+  },
+  "listing": {
+    "title": "Bugaboo Fox 3 Kinderwagen komplett Liegewanne und Sitz Schwarz",
+    "condition": "Gebraucht",
+    "condition_description": "Guter Zustand, Bezüge frisch gewaschen.",
+    "price_eur": 470,
+    "shipping_eur": 39,
+    "landed_eur": 509,
+    "owner_max_eur": 560,
+    "percent_of_max": 91,
+    "seller": { "feedback_score": 86, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 2,
+    "item_specifics": [
+      { "name": "Marke", "value": "Bugaboo" },
+      { "name": "Modell", "value": "Fox 3" },
+      { "name": "Farbe", "value": "Schwarz" }
+    ],
+    "image_count": 10,
+    "description": "Bugaboo Fox 3 von 2023, ein Kind, Nichtraucherhaushalt. Gestell, Liegewanne, Sitzeinheit, Regenschutz und Moskitonetz sind dabei. Die Reifen haben noch gutes Profil, die Federung arbeitet ohne Geräusche. Kleine Kratzer am Schiebebügel. Wir verkaufen günstig, weil wir umziehen. Versand per Spedition in zwei Paketen.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["pass", "caution"], "product_match_in": ["match"] }
+}

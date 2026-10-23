@@ -1,12 +1,11 @@
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from "node:crypto";
 import pg from "pg";
-import { DASHBOARD_QUERIES } from "./dashboard.js";
 import { addHourlyCounts, recordDeletionEvent, recordProbeSeen } from "./deletion.js";
 import { PGBOSS_SCHEMA, PGBOSS_SCHEMA_VERSION } from "./queue/schema-version.js";
 import { withRoleLock } from "./role-lock.js";
 
-// The roles the server, the worker and the dashboard connect as (section 2.5).
-export type ServiceRole = "app" | "worker" | "dashboard";
+// The roles the server, the worker, the dashboard and web connect as (section 2.5, spec 2.10).
+export type ServiceRole = "app" | "worker" | "dashboard" | "web";
 
 type LockOptions = { lockAttempts?: number; lockRetryMs?: number };
 
@@ -136,8 +135,29 @@ export async function checkWorkerRole(workerConnectionString: string): Promise<v
   }
 }
 
-// Connects as dashboard with the URL the dashboard listener will use, runs every dashboard query
-// once and checks that a write and a read outside its grants are refused (section 2.5).
+// The tables Release 0's dashboard reads (MVP section 8.2). v2 has no dashboard; the role stays for
+// a rollback to Release 0 until a contract migration drops it (spec 11.3).
+const RELEASE_0_DASHBOARD_TABLES = [
+  "app.feed",
+  "app.segment_rule",
+  "app.poll_run",
+  "app.candidate",
+  "app.screening",
+  "app.llm_usage_daily",
+  "app.alert",
+  "app.alert_delivery",
+  "app.price_sample",
+  "app.purge_run",
+  "app.worker_status",
+  "app.screening_pause",
+  "app.smtp_pause",
+  "app.api_usage_hourly",
+  "ebay_live.classifier_sample",
+  "ebay_live.screening_text",
+];
+
+// Connects as dashboard with the URL the migrate step sets, reads every table Release 0's
+// dashboard reads and checks that a write and a read outside its grants are refused (section 2.5).
 export async function checkDashboardRole(dashboardConnectionString: string): Promise<void> {
   const check = roleStep("dashboard");
   const client = new pg.Client({ connectionString: dashboardConnectionString, connectionTimeoutMillis: 10_000 });
@@ -147,24 +167,41 @@ export async function checkDashboardRole(dashboardConnectionString: string): Pro
     const timeout = await check("statement_timeout", () => currentSetting(client, "statement_timeout"));
     if (timeout !== "2s") throw new RoleCheckError(`dashboard role check failed at statement_timeout: ${timeout}`);
     await check("begin", () => client.query("BEGIN"));
-    const now = await check("now", async () => {
-      const result = await client.query<{ now: Date }>("SELECT now() AS now");
-      const [row] = result.rows;
-      if (row === undefined) throw new Error("SELECT returned no row");
-      return row.now;
-    });
-    for (const [name, query] of Object.entries(DASHBOARD_QUERIES)) {
-      await check(`query ${name}`, () => query(client, now));
+    for (const table of RELEASE_0_DASHBOARD_TABLES) {
+      await check(`read ${table}`, () => client.query(`SELECT 1 FROM ${table} LIMIT 1`));
     }
     await check("rollback", () => client.query("ROLLBACK"));
     // READ WRITE, so the refusal comes from the grants and not from the read-only default.
     await check("begin read write", () => client.query("BEGIN READ WRITE"));
     await refused(
       client,
+      "dashboard",
       "insert app.feed",
       "INSERT INTO app.feed (id, category_id, q, price_ceiling_cents, condition_ids, day_interval_s, night_interval_s) VALUES ('gpu', '1', 'x', 1, '{}', 60, 60) ON CONFLICT DO NOTHING",
     );
-    await refused(client, "select app.deletion_event", "SELECT 1 FROM app.deletion_event LIMIT 1");
+    await refused(client, "dashboard", "select app.deletion_event", "SELECT 1 FROM app.deletion_event LIMIT 1");
+  } finally {
+    await client.query("ROLLBACK").catch(() => undefined);
+    await client.end();
+  }
+}
+
+// Connects as web with the URL the web service will use, reads what every page and the sign-in
+// read, and checks that deleting its own sign-in trail and reading the deletion tables are refused
+// (spec 2.10). Nothing is written.
+export async function checkWebRole(webConnectionString: string): Promise<void> {
+  const check = roleStep("web");
+  const client = new pg.Client({ connectionString: webConnectionString, connectionTimeoutMillis: 10_000 });
+  client.on("error", () => undefined);
+  await check("connect", () => client.connect());
+  try {
+    const timeout = await check("statement_timeout", () => currentSetting(client, "statement_timeout"));
+    if (timeout !== "2s") throw new RoleCheckError(`web role check failed at statement_timeout: ${timeout}`);
+    await check("begin", () => client.query("BEGIN READ WRITE"));
+    await check("select app.product", () => client.query("SELECT 1 FROM app.product LIMIT 1"));
+    await check("select auth.app_user", () => client.query("SELECT 1 FROM auth.app_user LIMIT 1"));
+    await refused(client, "web", "delete auth.auth_event", "DELETE FROM auth.auth_event WHERE false");
+    await refused(client, "web", "select app.deletion_event", "SELECT 1 FROM app.deletion_event LIMIT 1");
   } finally {
     await client.query("ROLLBACK").catch(() => undefined);
     await client.end();
@@ -172,7 +209,7 @@ export async function checkDashboardRole(dashboardConnectionString: string): Pro
 }
 
 // The statement must fail with insufficient_privilege. A savepoint keeps the transaction usable.
-async function refused(client: pg.Client, name: string, statement: string): Promise<void> {
+async function refused(client: pg.Client, role: ServiceRole, name: string, statement: string): Promise<void> {
   await client.query("SAVEPOINT refused");
   let outcome = "success";
   try {
@@ -182,7 +219,7 @@ async function refused(client: pg.Client, name: string, statement: string): Prom
   }
   await client.query("ROLLBACK TO SAVEPOINT refused");
   if (outcome !== "42501") {
-    throw new RoleCheckError(`dashboard role check failed at ${name}: expected 42501, got ${outcome}`);
+    throw new RoleCheckError(`${role} role check failed at ${name}: expected 42501, got ${outcome}`);
   }
 }
 

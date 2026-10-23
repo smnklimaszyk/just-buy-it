@@ -34,6 +34,31 @@ check "/healthz reports $expected" "got '$body'" [ "$body" = "{\"sha\":\"$expect
 code="$(status_of "$base/privacy")"
 check "/privacy is 200" "got $code" [ "$code" = 200 ]
 
+# header_of <path> <header name>: that header's lines in the reply to a GET, without carriage returns.
+header_of() {
+  curl -sS --max-time 10 -o /dev/null -D - "$base$1" 2>/dev/null | tr -d '\r' | grep -i "^$2:" || true
+}
+
+# Spec 7.11: both the sign-in page and /privacy lock down default-src and frame-ancestors.
+check_strict_csp() {
+  local csp strict=no
+  csp="$(header_of "$1" content-security-policy)"
+  if grep -Eqi "default-src 'none'.*frame-ancestors 'none'" <<<"$csp"; then strict=yes; fi
+  check "$1 has a CSP with default-src 'none' and frame-ancestors 'none'" "got '${csp:-no CSP header}'" [ "$strict" = yes ]
+}
+
+# server's /privacy has its own CSP since Release 0.
+check_strict_csp /privacy
+
+# The sign-in page of the web service (spec 7.2).
+code="$(status_of "$base/login")"
+check "/login is 200" "got $code" [ "$code" = 200 ]
+check_strict_csp /login
+frame="$(header_of /login x-frame-options)"
+deny=no
+if grep -Eqix 'x-frame-options: *deny' <<<"$frame"; then deny=yes; fi
+check "/login has X-Frame-Options: DENY" "got '${frame:-no X-Frame-Options header}'" [ "$deny" = yes ]
+
 reply="$(curl -sS --max-time 10 -w '\n%{http_code} %{content_type}' \
   "$base/ebay/account-deletion?challenge_code=smoke" 2>/dev/null || true)"
 meta="${reply##*$'\n'}"
@@ -59,18 +84,15 @@ check "PUT /ebay/account-deletion is 405" "got $code" [ "$code" = 405 ]
 code="$(status_of -X POST -H 'content-type: application/json' --data-binary '{}' "$base/ebay/account-deletion")"
 check "POST {} without a signature header is 204" "got $code" [ "$code" = 204 ]
 
-path="/smoke-$RANDOM$RANDOM"
-code="$(status_of "$base$path")"
-check "$path is 404" "got $code" [ "$code" = 404 ]
-
 code="$(head -c 71680 /dev/zero | tr '\0' 'x' |
   status_of -X POST -H 'content-type: application/json' --data-binary @- "$base/ebay/account-deletion")"
 check "70 KB POST to /ebay/account-deletion is 413" "got $code" [ "$code" = 413 ]
 
-# MVP section 8.1: the dashboard has its own listener on the host's loopback and no public path.
-for dashboard_path in /candidates /alerts /prices /rejections; do
-  code="$(status_of "$base$dashboard_path")"
-  check "$dashboard_path is 404 on the public site" "got $code" [ "$code" = 404 ]
+# Spec 7.1: every other path reaches web, which sends a browser without a session to /login. The
+# old dashboard paths are among them: they never answer without a session.
+for page in / /products /deals /settings /people /candidates /alerts /prices /rejections "/smoke-$RANDOM$RANDOM"; do
+  reply="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code} %{redirect_url}' "$base$page" 2>/dev/null || true)"
+  check "$page without a session is 303 to /login" "got '$reply'" [ "$reply" = "303 $base/login" ]
 done
 
 # curl reports a connect time of 0 when no connection was made (refused or dropped).

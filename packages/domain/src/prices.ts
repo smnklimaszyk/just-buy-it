@@ -1,4 +1,5 @@
-import type { SegmentRule } from "./rules.js";
+// How the MVP's segment rules priced: per item, or per GB.
+type RuleKind = "per_item" | "per_gb";
 
 // Section 3.5: the price read over app.price_sample rows of one segment and window.
 export type PriceSampleInput = { landedCents: number | null; totalGb: number | null };
@@ -39,7 +40,7 @@ export type RuleSuggestion =
 const roundDown = (value: number, step: number): number => Math.floor(value / step + 1e-9) * step;
 
 // Section 3.5: max = min(p25, 0.8 x p50), floor = 0.4 x p50, both rounded down.
-export function suggestRule(stats: PriceStatistics, kind: SegmentRule["kind"], readCeilingCents: number): RuleSuggestion {
+export function suggestRule(stats: PriceStatistics, kind: RuleKind, readCeilingCents: number): RuleSuggestion {
   if (stats.n < MIN_SAMPLES_FOR_SUGGESTION || stats.p25 === null || stats.p50 === null) {
     return { kind: "none", reason: "too_few" };
   }
@@ -54,7 +55,7 @@ export function suggestRule(stats: PriceStatistics, kind: SegmentRule["kind"], r
     : { kind, maxCentsPerGb: max, minCentsPerGb: floor };
 }
 
-export function priceStatistics(rows: readonly PriceSampleInput[], kind: SegmentRule["kind"]): PriceStatistics {
+export function priceStatistics(rows: readonly PriceSampleInput[], kind: RuleKind): PriceStatistics {
   const known = rows.filter(
     (r): r is { landedCents: number; totalGb: number | null } =>
       r.landedCents !== null && (kind === "per_item" || (r.totalGb !== null && r.totalGb > 0)),

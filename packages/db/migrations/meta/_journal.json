@@ -50,6 +50,41 @@
       "when": 1792571124761,
       "tag": "0006_seed_feeds_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792663498699,
+      "tag": "0007_product_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792664467691,
+      "tag": "0008_market_value",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792665219132,
+      "tag": "0009_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792665582645,
+      "tag": "0010_pipeline_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792666110083,
+      "tag": "0011_web_role",
+      "breakpoints": true
     }
   ]
 }

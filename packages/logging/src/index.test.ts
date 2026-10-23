@@ -96,6 +96,34 @@ describe("loggerOptions Claude and SMTP secrets", () => {
   });
 });
 
+describe("loggerOptions sign-in secrets", () => {
+  it("redacts code, token, cookie, AUTH_KEY and LOGIN_SMTP_PASSWORD fields and the set-cookie and x-csrf-token headers at depths 0 to 2", () => {
+    const secrets = {
+      code: "secret-code-48210937",
+      token: "secret-session-token",
+      cookie: "secret-cookie",
+      AUTH_KEY: "secret-auth-key",
+      LOGIN_SMTP_PASSWORD: "secret-login-smtp",
+      event: "kept",
+    };
+    const hidden = {
+      code: "[redacted]",
+      token: "[redacted]",
+      cookie: "[redacted]",
+      AUTH_KEY: "[redacted]",
+      LOGIN_SMTP_PASSWORD: "[redacted]",
+      event: "kept",
+    };
+    const headers = { "set-cookie": "secret-set-cookie", "x-csrf-token": "secret-csrf", accept: "text/html" };
+
+    const logged = logOnce({ ...secrets, login: secrets, mail: { attempt: secrets }, headers, res: { headers } });
+
+    expect(logged).toMatchObject({ ...hidden, login: hidden, mail: { attempt: hidden } });
+    expect(logged["headers"]).toEqual({ "set-cookie": "[redacted]", "x-csrf-token": "[redacted]", accept: "text/html" });
+    expect(JSON.stringify(logged)).not.toMatch(/secret-/);
+  });
+});
+
 describe("loggerOptions listing content", () => {
   it("redacts title, description, itemWebUrl and seller at depths 0 to 2", () => {
     const listing = {

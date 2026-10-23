@@ -28,17 +28,17 @@ export function buildItemSummary(overrides: Record<string, unknown> = {}): Recor
   };
 }
 
-// A getItem response for a used graphics card, with only the fields our schema declares.
+// A getItem response for a used item, with only the fields our schema declares.
 export function buildItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   nextItem = (nextItem % 99) + 1;
   const nn = String(nextItem).padStart(2, "0");
   return {
     itemId: `v1|9000000000${nn}|0`,
     legacyItemId: `9000000000${nn}`,
-    title: `Synthetic graphics card ${nn}`,
+    title: `Synthetic used item ${nn}`,
     price: { value: "459.00", currency: "EUR" },
     buyingOptions: ["FIXED_PRICE", "BEST_OFFER"],
-    categoryId: "27386",
+    categoryId: "3323",
     condition: "Gebraucht",
     conditionId: "3000",
     conditionDescription: "Synthetic condition text.",

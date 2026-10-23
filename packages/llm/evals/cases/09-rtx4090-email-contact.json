@@ -1,7 +1,16 @@
 {
   "id": "09-rtx4090-email-contact",
   "group": "scam",
-  "segment": "gpu_4090",
+  "set": "mvp",
+  "product_kind": "hardware",
+  "product": {
+    "name": "RTX 4090",
+    "description": "An NVIDIA GeForce RTX 4090 graphics card with 24 GB: the working card itself. Not the China variant RTX 4090 D.",
+    "must_contain": [["4090"]],
+    "must_not_contain": ["4090d", "4090 d", "defekt"],
+    "conditions": ["new", "open_box", "used"],
+    "limit_eur": 1280
+  },
   "listing": {
     "title": "RTX 4090 24GB neu und unbenutzt",
     "condition": "Neu: Sonstige (siehe Artikelbeschreibung)",

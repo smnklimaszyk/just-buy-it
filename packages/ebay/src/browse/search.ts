@@ -1,6 +1,12 @@
 import { EbayError } from "../errors.js";
 import { DEFAULT_TIMEOUT_MS, getJson, type AppTokenCache, type FetchFn } from "../http.js";
-import { itemSummarySchema, searchPageSchema, type EbayErrorDetail, type ItemSummary } from "./schemas.js";
+import {
+  itemSummarySchema,
+  searchPageSchema,
+  type CategoryCount,
+  type EbayErrorDetail,
+  type ItemSummary,
+} from "./schemas.js";
 
 export type EbayCallReservation = {
   resource: "buy.browse";
@@ -41,6 +47,8 @@ export type BrowseSearchPage = {
   items: ItemSummary[];
   // Items that failed the schema: counted and skipped.
   malformedItems: number;
+  // Only with the CATEGORY_REFINEMENTS field group; empty otherwise.
+  categories: CategoryCount[];
 };
 
 export type BrowseClientOptions = {
@@ -118,6 +126,7 @@ export function createBrowseClient(options: BrowseClientOptions) {
       warnings: page.warnings ?? [],
       items,
       malformedItems,
+      categories: page.refinement?.categoryDistributions ?? [],
     };
   }
 

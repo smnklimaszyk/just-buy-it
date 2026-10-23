@@ -45,12 +45,12 @@ export type SummaryFields = {
 // the schema must drop it (A23).
 export function itemSummary(fields: SummaryFields = {}): Record<string, unknown> {
   const legacyItemId = fields.legacyItemId ?? fakeLegacyItemId();
-  const categoryId = fields.categoryId ?? "27386";
+  const categoryId = fields.categoryId ?? "19006";
   const shipping = fields.shipping === undefined ? "10.00" : fields.shipping;
   return {
     itemId: `v1|${legacyItemId}|0`,
     legacyItemId,
-    title: fields.title ?? "RTX 3090 Founders Edition 24GB",
+    title: fields.title ?? "Synthetic listing",
     price: { value: fields.price ?? "450.00", currency: fields.currency ?? "EUR" },
     buyingOptions: fields.buyingOptions ?? ["FIXED_PRICE"],
     leafCategoryIds: [categoryId],
@@ -75,14 +75,6 @@ export function itemSummary(fields: SummaryFields = {}): Record<string, unknown>
     ...fields.extra,
   };
 }
-
-export const gpuSummary = (fields: SummaryFields = {}) => itemSummary({ categoryId: "27386", ...fields });
-
-export const ramSummary = (fields: SummaryFields = {}) =>
-  itemSummary({ categoryId: "170083", title: "DDR4 32GB (2x16GB) 3200 MHz", price: "80.00", ...fields });
-
-export const pcSummary = (fields: SummaryFields = {}) =>
-  itemSummary({ categoryId: "179", title: "Gaming PC RTX 4090 Ryzen 7 32GB RAM", price: "1800.00", ...fields });
 
 // A search page body. `next` adds a next link, so the client sees more pages.
 export function searchPage(

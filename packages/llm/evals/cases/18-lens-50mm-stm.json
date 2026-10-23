@@ -1,0 +1,39 @@
+{
+  "id": "18-lens-50mm-stm",
+  "set": "v2",
+  "group": "legitimate",
+  "product_kind": "other",
+  "product": {
+    "name": "Canon EF 50mm f/1.8 STM",
+    "description": "The Canon EF 50mm f/1.8 STM prime lens for the Canon EF mount: the lens itself, in working order, with clean glass.",
+    "must_contain": [["ef 50mm", "50mm"], ["stm"]],
+    "must_not_contain": ["defekt", "pilz"],
+    "conditions": ["open_box", "used"],
+    "limit_eur": 95
+  },
+  "listing": {
+    "title": "Canon EF 50mm f/1.8 STM Objektiv Festbrennweite",
+    "condition": "Gebraucht",
+    "condition_description": "Optik klar, keine Kratzer.",
+    "price_eur": 79,
+    "shipping_eur": 5.49,
+    "landed_eur": 84.49,
+    "owner_max_eur": 95,
+    "percent_of_max": 89,
+    "seller": { "feedback_score": 412, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 3,
+    "item_specifics": [
+      { "name": "Marke", "value": "Canon" },
+      { "name": "Modell", "value": "EF 50mm f/1.8 STM" },
+      { "name": "Objektivbajonett", "value": "Canon EF" },
+      { "name": "Brennweite", "value": "50 mm" }
+    ],
+    "image_count": 6,
+    "description": "Verkaufe mein Canon EF 50mm f/1.8 STM, gekauft 2021. Optik klar, kein Pilz, kein Staub, keine Kratzer auf den Linsen. Der Autofokus ist leise und schnell, das Objektiv lief an einer EOS 90D. Beide Deckel sind dabei. Versand versichert mit DHL. Privatverkauf, keine Garantie und keine Rücknahme.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["pass"], "product_match_in": ["match"] }
+}

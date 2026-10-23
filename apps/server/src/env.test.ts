@@ -11,8 +11,6 @@ const valid = {
   GIT_SHA: "0123456789abcdef0123456789abcdef01234567",
   DATABASE_URL: "postgres://app:apppass@postgres:5432/ebay_sniper",
   DELETION_PROBE_CODE: "Pr0be_code-0123456789abcdefghijABCDEFGHI",
-  DASHBOARD_PORT: "3001",
-  DASHBOARD_DATABASE_URL: "postgres://dashboard:dashpass@postgres:5432/ebay_sniper",
 };
 
 describe("parseEnv", () => {
@@ -27,8 +25,6 @@ describe("parseEnv", () => {
       gitSha: "0123456789abcdef0123456789abcdef01234567",
       databaseUrl: "postgres://app:apppass@postgres:5432/ebay_sniper",
       deletionProbeCode: "Pr0be_code-0123456789abcdefghijABCDEFGHI",
-      dashboardPort: 3001,
-      dashboardDatabaseUrl: "postgres://dashboard:dashpass@postgres:5432/ebay_sniper",
     });
   });
 
@@ -81,38 +77,11 @@ describe("parseEnv database and probe values", () => {
   );
 });
 
-describe("parseEnv dashboard values", () => {
-  it.each([undefined, ""])("listens on port 3001 when DASHBOARD_PORT is %s", (port) => {
-    expect(parseEnv({ ...valid, DASHBOARD_PORT: port }).dashboardPort).toBe(3001);
-  });
+describe("parseEnv without the MVP dashboard (spec 10.4)", () => {
+  it("ignores DASHBOARD_PORT and DASHBOARD_DATABASE_URL left over from Release 0", () => {
+    const leftover = { DASHBOARD_PORT: "abc", DASHBOARD_DATABASE_URL: "not a url" };
 
-  it("reads another DASHBOARD_PORT", () => {
-    expect(parseEnv({ ...valid, DASHBOARD_PORT: "3500" }).dashboardPort).toBe(3500);
-  });
-
-  it.each(["0", "-1", "3001.5", "abc", "65536"])("refuses DASHBOARD_PORT %s", (port) => {
-    expect(() => parseEnv({ ...valid, DASHBOARD_PORT: port })).toThrow("invalid environment: DASHBOARD_PORT");
-  });
-
-  it("refuses a DASHBOARD_PORT equal to PORT, since both listeners run in one process", () => {
-    expect(() => parseEnv({ ...valid, DASHBOARD_PORT: valid.PORT })).toThrow("invalid environment: DASHBOARD_PORT");
-  });
-
-  it.each([undefined, "", "http://dashboard:x@postgres:5432/ebay_sniper", "not a url"])(
-    "refuses a DASHBOARD_DATABASE_URL that is missing or not postgres: %s",
-    (url) => {
-      expect(() => parseEnv({ ...valid, DASHBOARD_DATABASE_URL: url })).toThrow(
-        "invalid environment: DASHBOARD_DATABASE_URL",
-      );
-    },
-  );
-
-  it("never puts the dashboard password into the message", () => {
-    const sentinel = "sentinel-dashboard-password";
-
-    expect(() => parseEnv({ ...valid, DASHBOARD_DATABASE_URL: `http://dashboard:${sentinel}@db/x` })).toThrow(
-      /^invalid environment: DASHBOARD_DATABASE_URL$/,
-    );
+    expect(parseEnv({ ...valid, ...leftover })).toEqual(parseEnv(valid));
   });
 });
 

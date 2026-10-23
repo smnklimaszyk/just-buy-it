@@ -1,11 +1,12 @@
-import type { FeedId, PriceSampleInput, RejectReason, Segment } from "@ebay-sniper/domain";
+import type { PriceSampleInput } from "@ebay-sniper/domain";
 import type { Queryable } from "./pool.js";
 
 // Section 3.5: one row per qualifying listing at its first poll sighting. No item key, ID, title
-// or seller.
+// or seller. v2 writes the product key into segment and, into feed_id, the search id (poll) or the
+// product key (sweep); rows written before v2 hold a segment and a feed id.
 export type PriceSampleRow = {
-  segment: Segment;
-  feedId: FeedId;
+  segment: string;
+  feedId: string;
   priceCents: number;
   shippingCents: number | null;
   // NULL when shipping is unknown.
@@ -31,13 +32,14 @@ export async function insertPriceSamples(db: Queryable, rows: readonly PriceSamp
   );
 }
 
+// v2 writes feed_id and segment as for price_sample, and the matcher's reason.
 export type ClassifierSampleRow = {
-  feedId: FeedId;
-  segment: Segment | null;
+  feedId: string;
+  segment: string | null;
   title: string;
   landedCents: number | null;
   outcome: "candidate" | "rejected";
-  reason: RejectReason | null;
+  reason: string | null;
   seenAt: Date;
 };
 
@@ -81,7 +83,7 @@ export async function insertClassifierSamples(db: Queryable, rows: readonly Clas
 }
 
 // The samples of one segment seen at or after `since`, oldest first, for priceStatistics().
-export async function priceSamplesSince(db: Queryable, segment: Segment, since: Date): Promise<PriceSampleInput[]> {
+export async function priceSamplesSince(db: Queryable, segment: string, since: Date): Promise<PriceSampleInput[]> {
   const result = await db.query<{ landed_cents: number | null; total_gb: number | null }>(
     `SELECT landed_cents, total_gb FROM app.price_sample
       WHERE segment = $1 AND seen_at >= $2

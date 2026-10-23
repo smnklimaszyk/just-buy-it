@@ -33,10 +33,11 @@ const ANTHROPIC_HOST = [
   },
 ];
 
-const TESTS = ["**/*.test.ts"];
+const TESTS = ["**/*.test.ts", "**/*.test.tsx"];
 
 export default tseslint.config(
-  { ignores: ["**/dist/**", "**/node_modules/**"] },
+  // The vendored design system (ADR 0039) is kept as delivered.
+  { ignores: ["**/dist/**", "**/node_modules/**", "apps/web/design-system/**"] },
   js.configs.recommended,
   ...tseslint.configs.strict,
   {
@@ -56,7 +57,7 @@ export default tseslint.config(
   // so each glob below lists every selector that applies to it. This first one covers every file
   // the later ones do not, tests and tools included.
   {
-    files: ["**/*.{ts,js,cjs,mjs}"],
+    files: ["**/*.{ts,tsx,js,cjs,mjs}"],
     ignores: ["packages/llm/**"],
     rules: {
       "no-restricted-syntax": ["error", ...ANTHROPIC_HOST],
@@ -79,7 +80,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["apps/*/src/**/*.ts"],
+    files: ["apps/*/src/**/*.{ts,tsx}"],
     ignores: ["apps/*/src/clock.ts", "apps/*/src/env.ts", ...TESTS],
     rules: {
       "no-restricted-syntax": ["error", ...CLOCK_READS, ...ENV_READS, ...ANTHROPIC_HOST],

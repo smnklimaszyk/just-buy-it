@@ -47,9 +47,9 @@ if [[ -n "$worker" ]]; then
 fi
 check "worker container is healthy" "got '$health'" [ "$health" = healthy ]
 
-# The dashboard listener is published on the host's loopback only.
-body="$(curl -fsS --max-time 5 http://127.0.0.1:3142/healthz 2>/dev/null || true)"
-check "dashboard /healthz reports $sha" "got '$body'" [ "$body" = "{\"sha\":\"$sha\"}" ]
+# The web service is published on the host's loopback only (spec 7.1).
+body="$(curl -fsS --max-time 5 http://127.0.0.1:3141/healthz 2>/dev/null || true)"
+check "web /healthz reports $sha" "got '$body'" [ "$body" = "{\"sha\":\"$sha\"}" ]
 
 postgres="$(container postgres)"
 
@@ -69,13 +69,16 @@ check "pgboss schema version is 46" "got '$value'" [ "$value" = 46 ]
 value="$(sql "SELECT count(*) FROM app.worker_status WHERE heartbeat_at > now() - interval '1 minute'")"
 check "worker heartbeat under 1 minute old" "got '$value' fresh worker_status rows" [ "$value" = 1 ]
 
-# The newest finished poll per enabled feed; a poll running right now does not count against it.
-value="$(sql "SELECT count(*) FROM app.feed f LEFT JOIN LATERAL (
+# The newest finished poll per enabled search that is not retired; a poll running right now does
+# not count against it. A poll's feed_id is its search id. The slow night interval is 30 minutes,
+# so each search gets its own longer interval plus 5 minutes.
+value="$(sql "SELECT count(*) FROM app.search s LEFT JOIN LATERAL (
   SELECT r.status, r.started_at FROM app.poll_run r
-  WHERE r.feed_id = f.id AND r.kind = 'poll' AND r.status <> 'running'
+  WHERE r.feed_id = s.id AND r.kind = 'poll' AND r.status <> 'running'
   ORDER BY r.started_at DESC LIMIT 1) last ON true
-  WHERE f.enabled AND (last.status IS DISTINCT FROM 'ok' OR last.started_at < now() - interval '15 minutes')")"
-check "last poll of every enabled feed is ok and under 15 minutes old" "got '$value' feed(s) behind" [ "$value" = 0 ]
+  WHERE s.enabled AND s.retired_at IS NULL AND (last.status IS DISTINCT FROM 'ok'
+    OR last.started_at < now() - make_interval(secs => greatest(s.day_interval_s, s.night_interval_s) + 300))")"
+check "last poll of every enabled search is ok and within its interval plus 5 minutes" "got '$value' search(es) behind" [ "$value" = 0 ]
 
 # A running row older than 5 minutes is stale (MVP section 2.3).
 value="$(sql "SELECT count(*) FROM app.poll_run WHERE status = 'running'

@@ -1,9 +1,18 @@
+import { saveProductWithPlan, type StoredProduct } from "@ebay-sniper/db";
 import type { JobQueue } from "@ebay-sniper/db/queue";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createItemKey } from "../item-key.js";
 import { createTestClock } from "../testing/clock.js";
 import { createTestDatabase, type TestDatabase } from "../testing/database.js";
-import { createFakeEbay, createFakeReserve, gpuSummary, hang, pcSummary, searchPage, testSearch } from "../testing/ebay.js";
+import {
+  createFakeEbay,
+  createFakeReserve,
+  hang,
+  itemSummary,
+  searchPage,
+  testSearch,
+  type SummaryFields,
+} from "../testing/ebay.js";
 import { createTestLog } from "../testing/log.js";
 import { jobs, resetTables, startTestQueue } from "../testing/queue.js";
 import { createPollHandler, type SearchDeps } from "./poll.js";
@@ -28,7 +37,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await resetTables(db);
-  await db.admin.query("UPDATE app.feed SET enabled = true");
+  await resetProducts();
 });
 
 function setup(overrides: Partial<SearchDeps> = {}) {
@@ -44,6 +53,7 @@ function setup(overrides: Partial<SearchDeps> = {}) {
     createSearch: testSearch(ebay, clock),
     itemKey: createItemKey(ITEM_KEY_SECRET),
     postalCode: "80331",
+    settingsEnv: SETTINGS_ENV,
     log: log.log,
     ...overrides,
   };
@@ -56,132 +66,341 @@ async function rows<T>(sql: string, params: unknown[] = []): Promise<T[]> {
   return result.rows as T[];
 }
 
-describe("poll handler, first poll of a feed (section 3.2 baseline)", () => {
-  it("is a baseline: page 1 only, in-band items seen as baseline, price samples, no candidate and no enrich job", async () => {
-    const { ebay, poll, job } = setup();
-    const created = new Date(NOW.getTime() - HOUR_MS).toISOString();
+const recent = () => new Date(NOW.getTime() - HOUR_MS).toISOString();
+
+// ---- v2: polls per app.search, matched against the search's products (spec 5.1, 5.5, 9) --------
+
+const SETTINGS_ENV = { claudeDailyCallLimit: 40, claudeDailySpendLimitMicrousd: 2_000_000, buyerProfile: null };
+// Synthetic example product (ADR 0023): a portrait lens in the lens category.
+const LENS_CATEGORY = "3323";
+
+function lensFields(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    name: "Portrait lens",
+    description: "An 85 mm portrait lens for a full-frame camera.",
+    status: "active",
+    categoryId: LENS_CATEGORY,
+    conditionIds: ["3000"],
+    searchWords: ["85mm"],
+    mustWords: [["85mm"]],
+    priceMode: "fixed",
+    maxCents: 30_000,
+    buyerProfile: "private",
+    ...overrides,
+  };
+}
+
+// Saved the way the form saves it, two hours before NOW by default, so watch_from is NOW - 2 h.
+async function createProduct(overrides: Record<string, unknown> = {}, at = new Date(NOW.getTime() - 2 * HOUR_MS)) {
+  const result = await saveProductWithPlan(
+    db.admin,
+    { kind: "create", fields: lensFields(overrides) },
+    { at, actor: "system:cli", userId: null, env: SETTINGS_ENV },
+  );
+  if (!result.ok) throw new Error(`save refused: ${JSON.stringify(result)}`);
+  return result.product;
+}
+
+async function searchOf(product: StoredProduct): Promise<string> {
+  const result = await db.admin.query<{ search_id: string }>("SELECT search_id FROM app.search_product WHERE product_id = $1", [
+    product.id,
+  ]);
+  const id = result.rows[0]?.search_id;
+  if (id === undefined) throw new Error("product has no search");
+  return id;
+}
+
+async function resetProducts(): Promise<void> {
+  await db.admin.query(
+    `TRUNCATE app.product, app.product_source, app.product_revision, app.search, app.search_product, app.setting,
+       app.market_value, app.market_request CASCADE`,
+  );
+}
+
+function setupSearch(overrides: Partial<SearchDeps> = {}) {
+  return setup({ settingsEnv: SETTINGS_ENV, ...overrides });
+}
+
+const lens = (fields: SummaryFields = {}) =>
+  itemSummary({ categoryId: LENS_CATEGORY, title: "Canon EF 85mm 1.8 USM", price: "250.00", itemCreationDate: recent(), ...fields });
+
+describe("poll handler, one search of the products (spec 5.1, 9)", () => {
+  it("makes an in-band listing a candidate of its product, with the rules it passed, its listing and an enrich job", async () => {
+    const product = await createProduct();
+    const searchId = await searchOf(product);
+    const { ebay, poll, job, log } = setupSearch();
+    ebay.searchPages(searchPage([lens({ shipping: "10.00" }), lens({ price: "400.00" })]));
+
+    await poll({ searchId }, job());
+
+    const candidates = await rows<{ listing_id: string }>(
+      `SELECT listing_id, feed_id, segment, source, price_cents, landed_cents, rule_version, product_version, match_version,
+              condition_group, limit_cents, price_mode, market_value_id, decision
+         FROM app.candidate`,
+    );
+    expect(candidates).toEqual([
+      {
+        listing_id: expect.any(String),
+        feed_id: searchId,
+        segment: product.key,
+        source: "poll",
+        price_cents: 25000,
+        landed_cents: 26000,
+        rule_version: product.version,
+        product_version: product.version,
+        match_version: product.matchVersion,
+        condition_group: "used",
+        limit_cents: 30000,
+        price_mode: "fixed",
+        market_value_id: null,
+        decision: "pending",
+      },
+    ]);
+    const listingId = candidates[0]?.listing_id;
+    expect(await rows("SELECT id, feed_id, segment FROM ebay_live.listing")).toEqual([
+      { id: listingId, feed_id: searchId, segment: product.key },
+    ]);
+    expect(await jobs(db, "enrich")).toEqual([{ listingId }]);
+    expect(await rows("SELECT feed_id, segment, outcome FROM app.seen_item ORDER BY outcome")).toEqual([
+      { feed_id: searchId, segment: product.key, outcome: "above_max" },
+      { feed_id: searchId, segment: product.key, outcome: "candidate" },
+    ]);
+    expect(await rows("SELECT feed_id, kind, baseline, status, pages, items, new_items, candidates, calls FROM app.poll_run")).toEqual([
+      { feed_id: searchId, kind: "poll", baseline: false, status: "ok", pages: 1, items: 2, new_items: 2, candidates: 1, calls: 1 },
+    ]);
+    expect(log.events("candidate_created")).toEqual([
+      { event: "candidate_created", listing_id: listingId, segment: product.key, source: "poll" },
+    ]);
+    const [url] = ebay.searches();
+    expect(Object.fromEntries(url?.searchParams ?? [])).toMatchObject({
+      q: "85mm",
+      category_ids: LENS_CATEGORY,
+      sort: "newlyListed",
+      offset: "0",
+    });
+  });
+
+  it("gives a listing that matches two products of the search to the most specific one", async () => {
+    const anyBrand = await createProduct({ name: "Portrait lens" });
+    const canon = await createProduct({ name: "Canon portrait lens", mustWords: [["85mm"], ["canon"]] });
+    const searchId = await searchOf(anyBrand);
+    const { ebay, poll, job, log } = setupSearch();
     ebay.searchPages(
-      searchPage(
-        [
-          gpuSummary({ title: "RTX 3090 Founders Edition 24GB", price: "450.00", itemCreationDate: created }),
-          gpuSummary({ title: "RTX 4090 Gaming OC", price: "1900.00", itemCreationDate: created }),
-          gpuSummary({ title: "Wasserkühler für RTX 4090", price: "300.00", itemCreationDate: created }),
-        ],
-        { next: true },
-      ),
+      searchPage([
+        lens({ legacyItemId: "955500000301", title: "Canon EF 85mm 1.8 USM" }),
+        lens({ legacyItemId: "955500000302", title: "Sigma 85mm 1.4 Art" }),
+      ]),
     );
 
-    await poll({ feedId: "gpu" }, job());
+    await poll({ searchId }, job());
 
-    expect(ebay.searches()).toHaveLength(1);
-    expect(await rows("SELECT kind, baseline, status, pages, items, new_items, candidates, calls FROM app.poll_run")).toEqual([
-      { kind: "poll", baseline: true, status: "ok", pages: 1, items: 3, new_items: 3, candidates: 0, calls: 1 },
+    expect(await searchOf(canon)).toBe(searchId);
+    expect(await rows("SELECT segment FROM app.candidate ORDER BY segment")).toEqual(
+      [{ segment: anyBrand.key }, { segment: canon.key }].sort((x, y) => (x.segment < y.segment ? -1 : 1)),
+    );
+    const itemKey = createItemKey(ITEM_KEY_SECRET);
+    expect(await rows("SELECT segment FROM app.seen_item WHERE item_key = $1", [itemKey("955500000301").itemKey])).toEqual([
+      { segment: canon.key },
     ]);
-    // An item the baseline rejects keeps its reason, so a later price drop into the band alerts.
-    expect(await rows("SELECT outcome FROM app.seen_item ORDER BY outcome")).toEqual([
-      { outcome: "above_max" },
-      { outcome: "accessory" },
-      { outcome: "baseline" },
+    expect(log.events("poll_run")).toMatchObject([{ search: searchId, ambiguous: 1, candidates: 2 }]);
+  });
+
+  it("in market mode takes the limit from the group's newest ok value before the first sighting, and stores which value", async () => {
+    const product = await createProduct({ priceMode: "below_market", belowMarketPct: 15 });
+    const searchId = await searchOf(product);
+    // Used: EUR 320 typical asking price, so the limit is EUR 272 rounded down to EUR 270, under the EUR 300 cap.
+    const value = await db.admin.query<{ id: string }>(
+      `INSERT INTO app.market_value (product_id, condition_group, match_version, computed_at, method_version, status, capped,
+         n, neff, value_cents)
+       VALUES ($1, 'used', $2, $3, 'mv-1', 'ok', false, 30, 22, 32000) RETURNING id`,
+      [product.id, product.matchVersion, new Date(NOW.getTime() - 24 * HOUR_MS)],
+    );
+    // A value computed after the first sighting does not count for it.
+    await db.admin.query(
+      `INSERT INTO app.market_value (product_id, condition_group, match_version, computed_at, method_version, status, capped,
+         n, neff, value_cents)
+       VALUES ($1, 'used', $2, $3, 'mv-1', 'ok', false, 30, 22, 20000)`,
+      [product.id, product.matchVersion, new Date(NOW.getTime() + 60_000)],
+    );
+    const { ebay, poll, job } = setupSearch();
+    ebay.searchPages(
+      searchPage([
+        lens({ legacyItemId: "955500000401", price: "250.00", shipping: "10.00" }),
+        lens({ legacyItemId: "955500000402", price: "280.00", shipping: "10.00" }),
+      ]),
+    );
+
+    await poll({ searchId }, job());
+
+    expect(await rows("SELECT landed_cents, condition_group, limit_cents, price_mode, market_value_id FROM app.candidate")).toEqual([
+      { landed_cents: 26000, condition_group: "used", limit_cents: 27000, price_mode: "below_market", market_value_id: value.rows[0]?.id },
     ]);
-    expect(await rows("SELECT segment, price_cents FROM app.price_sample ORDER BY price_cents")).toEqual([
-      { segment: "gpu_3090", price_cents: 45000 },
-      { segment: "gpu_4090", price_cents: 190000 },
+    expect(await rows("SELECT outcome FROM app.seen_item ORDER BY outcome")).toEqual([{ outcome: "above_max" }, { outcome: "candidate" }]);
+  });
+
+  it("in market mode uses the value of the new match version for a listing first seen before a rules change, not the cap", async () => {
+    const product = await createProduct({ priceMode: "below_market", belowMarketPct: 15 });
+    const searchId = await searchOf(product);
+    const insertValue = (matchVersion: number, at: Date) =>
+      db.admin.query(
+        `INSERT INTO app.market_value (product_id, condition_group, match_version, computed_at, method_version, status, capped,
+           n, neff, value_cents)
+         VALUES ($1, 'used', $2, $3, 'mv-1', 'ok', false, 30, 22, 32000)`,
+        [product.id, matchVersion, at],
+      );
+    // EUR 320 typical asking price: limit EUR 270 under the EUR 300 cap.
+    await insertValue(product.matchVersion, new Date(NOW.getTime() - 24 * HOUR_MS));
+    const { ebay, clock, poll, job } = setupSearch();
+    const item = lens({ legacyItemId: "955500000451", price: "280.00", shipping: "10.00" });
+    ebay.searchPages(searchPage([item]), searchPage([item]));
+    await poll({ searchId }, job());
+    // One exclude word more: a new match version, and its first value lands after the first sighting.
+    const changed = await saveProductWithPlan(
+      db.admin,
+      { kind: "update", id: product.id, version: product.version, fields: { ...product.rules, excludeWords: ["defekt"] } },
+      { at: new Date(NOW.getTime() + 60_000), actor: "system:cli", userId: null, env: SETTINGS_ENV },
+    );
+    if (!changed.ok) throw new Error("save refused");
+    await insertValue(changed.product.matchVersion, new Date(NOW.getTime() + 2 * 60_000));
+    clock.advance(5 * 60_000);
+    await poll({ searchId }, job());
+
+    expect(changed.product.matchVersion, "match version after the edit").toBe(product.matchVersion + 1);
+    expect(await rows("SELECT outcome FROM app.seen_item")).toEqual([{ outcome: "above_max" }]);
+    expect(await rows("SELECT id FROM app.candidate")).toEqual([]);
+  });
+
+  it("records a paused product's listing as product_paused, and makes it a candidate when seen again after the resume", async () => {
+    const portrait = await createProduct();
+    const telephoto = await createProduct({ name: "Telephoto lens", searchWords: ["200mm"], mustWords: [["200mm"]] });
+    const update = async (product: StoredProduct, status: string) => {
+      const result = await saveProductWithPlan(
+        db.admin,
+        { kind: "update", id: product.id, version: product.version, fields: { ...product.rules, status } },
+        { at: new Date(NOW.getTime() - HOUR_MS), actor: "system:cli", userId: null, env: SETTINGS_ENV },
+      );
+      if (!result.ok) throw new Error("save refused");
+      return result.product;
+    };
+    const paused = await update(telephoto, "paused");
+    const searchId = await searchOf(portrait);
+    const { ebay, clock, poll, job } = setupSearch();
+    const tele = lens({ legacyItemId: "955500000501", title: "Canon EF 200mm 2.8 L" });
+    ebay.searchPages(searchPage([tele, lens({ legacyItemId: "955500000502" })]), searchPage([tele]));
+
+    await poll({ searchId }, job());
+    const whilePaused = await rows("SELECT segment, outcome FROM app.seen_item ORDER BY segment");
+    await update(paused, "active");
+    clock.advance(5 * 60_000);
+    await poll({ searchId }, job());
+
+    expect(whilePaused).toEqual(
+      [
+        { segment: portrait.key, outcome: "candidate" },
+        { segment: telephoto.key, outcome: "product_paused" },
+      ].sort((x, y) => (x.segment < y.segment ? -1 : 1)),
+    );
+    expect(await rows("SELECT segment FROM app.candidate WHERE segment = $1", [telephoto.key])).toEqual([{ segment: telephoto.key }]);
+  });
+});
+
+describe("poll handler, baseline by listing age (spec 5.5)", () => {
+  it("records listings created before the product's watch_from as baseline with price samples, and never makes them candidates", async () => {
+    const product = await createProduct();
+    const searchId = await searchOf(product);
+    const { ebay, clock, poll, job } = setupSearch();
+    // watch_from is NOW - 2 h; these were listed 3 hours ago.
+    const created = new Date(NOW.getTime() - 3 * HOUR_MS).toISOString();
+    const listed = { legacyItemId: "955500000101", itemCreationDate: created };
+    ebay.searchPages(
+      searchPage([
+        lens({ ...listed, price: "250.00" }),
+        lens({ itemCreationDate: created, price: "400.00" }),
+        lens({ itemCreationDate: created, title: "Gegenlichtblende für 85mm Objektiv", price: "30.00" }),
+      ]),
+      searchPage([lens({ ...listed, price: "240.00" })]),
+    );
+
+    await poll({ searchId }, job());
+    clock.advance(5 * 60_000);
+    await poll({ searchId }, job());
+
+    // Rejections by the product's own rules are baseline too, so no later price drop alerts.
+    expect(await rows("SELECT segment, outcome FROM app.seen_item ORDER BY outcome")).toEqual([
+      { segment: product.key, outcome: "baseline" },
+      { segment: product.key, outcome: "baseline" },
+      { segment: product.key, outcome: "baseline" },
+    ]);
+    expect(await rows("SELECT segment, feed_id, price_cents FROM app.price_sample ORDER BY price_cents")).toEqual([
+      { segment: product.key, feed_id: searchId, price_cents: 25000 },
+      { segment: product.key, feed_id: searchId, price_cents: 40000 },
     ]);
     expect(await rows("SELECT count(*)::int AS n FROM app.candidate")).toEqual([{ n: 0 }]);
     expect(await rows("SELECT count(*)::int AS n FROM ebay_live.listing")).toEqual([{ n: 0 }]);
     expect(await jobs(db, "enrich")).toEqual([]);
   });
 
-  it("makes a candidate of an item the baseline saw above the max once its price drops into the band", async () => {
-    const { ebay, poll, job } = setup();
-    // Older than 24 h, so only its baseline sighting keeps it tracked.
-    const created = new Date(NOW.getTime() - 30 * HOUR_MS).toISOString();
-    const listing = { legacyItemId: "955500000501", title: "RTX 3090 Founders Edition 24GB", itemCreationDate: created };
-    ebay.searchPages(
-      searchPage([gpuSummary({ ...listing, price: "700.00" })]),
-      searchPage([gpuSummary({ ...listing, price: "450.00" })]),
-    );
-
-    await poll({ feedId: "gpu" }, job());
-    await poll({ feedId: "gpu" }, job());
-
-    expect(await rows("SELECT outcome, candidate_at IS NOT NULL AS candidate FROM app.seen_item")).toEqual([
-      { outcome: "candidate", candidate: true },
-    ]);
-    expect(await rows("SELECT price_cents FROM app.candidate")).toEqual([{ price_cents: 45000 }]);
-    expect(await jobs(db, "enrich")).toHaveLength(1);
-  });
-});
-
-// A feed that has polled before: one seen_item row, so the next poll is not a baseline.
-async function pastBaseline(feedId: string): Promise<void> {
-  const key = feedId.padEnd(64, "0").replace(/[^0-9a-f]/g, "f");
-  await db.admin.query(
-    `INSERT INTO app.seen_item (item_key, key_version, feed_id, outcome, first_seen_at, last_seen_at)
-     VALUES ($1, 1, $2, 'baseline', $3, $3)`,
-    [key, feedId, new Date(NOW.getTime() - HOUR_MS)],
-  );
-}
-
-const recent = () => new Date(NOW.getTime() - HOUR_MS).toISOString();
-
-describe("poll handler, candidates (sections 2.4, 3.2)", () => {
-  it("makes an in-band item a candidate with its listing, summary content and enrich job", async () => {
-    await pastBaseline("gpu");
-    const { ebay, poll, job, log } = setup();
+  it("finishes with the rows it read when the search words change mid-poll; later polls treat older listings as baseline", async () => {
+    const product = await createProduct();
+    const searchId = await searchOf(product);
+    const { ebay, clock, poll, job } = setupSearch();
+    const minutesAgo = (m: number) => new Date(NOW.getTime() - m * 60_000).toISOString();
+    const a = { legacyItemId: "955500000201", itemCreationDate: minutesAgo(60) };
+    let saved = false;
+    // The save lands after the poll read the products and before it commits its sightings.
+    ebay.beforeSearch(async () => {
+      if (saved) return;
+      saved = true;
+      const result = await saveProductWithPlan(
+        db.admin,
+        { kind: "update", id: product.id, version: product.version, fields: { ...product.rules, searchWords: ["85mm", "portrait"] } },
+        { at: NOW, actor: "system:cli", userId: null, env: SETTINGS_ENV },
+      );
+      if (!result.ok) throw new Error("save refused");
+    });
     ebay.searchPages(
       searchPage([
-        gpuSummary({ title: "RTX 3090 Founders Edition 24GB", price: "450.00", shipping: "10.00", itemCreationDate: recent() }),
-        gpuSummary({ title: "RTX 4090 Gaming OC", price: "1900.00", itemCreationDate: recent() }),
+        lens({ ...a, price: "400.00" }),
+        lens({ legacyItemId: "955500000202", itemCreationDate: minutesAgo(30) }),
+      ]),
+      searchPage([
+        lens({ ...a, price: "250.00" }),
+        lens({ legacyItemId: "955500000203", itemCreationDate: minutesAgo(10) }),
+        lens({ legacyItemId: "955500000204", itemCreationDate: new Date(NOW.getTime() + 60_000).toISOString() }),
       ]),
     );
 
-    await poll({ feedId: "gpu" }, job());
+    await poll({ searchId }, job());
+    clock.advance(5 * 60_000);
+    await poll({ searchId }, job());
 
-    const candidates = await rows<{ listing_id: string }>(
-      `SELECT listing_id, segment, source, price_cents, shipping_cents, landed_cents, shipping_known, rule_version, decision
-         FROM app.candidate`,
-    );
-    expect(candidates).toEqual([
-      {
-        listing_id: expect.any(String),
-        segment: "gpu_3090",
-        source: "poll",
-        price_cents: 45000,
-        shipping_cents: 1000,
-        landed_cents: 46000,
-        shipping_known: true,
-        rule_version: 1,
-        decision: "pending",
-      },
+    const itemKey = createItemKey(ITEM_KEY_SECRET);
+    const outcomes = await rows<{ item_key: string; outcome: string }>("SELECT item_key, outcome FROM app.seen_item");
+    const byItem = Object.fromEntries(outcomes.map((row) => [row.item_key, row.outcome]));
+    expect(["955500000201", "955500000202", "955500000203", "955500000204"].map((id) => byItem[itemKey(id).itemKey])).toEqual([
+      "baseline",
+      "candidate",
+      "baseline",
+      "candidate",
     ]);
-    const listingId = candidates[0]?.listing_id;
-    expect(await rows("SELECT id, feed_id, segment, content_expires_at FROM ebay_live.listing")).toEqual([
-      { id: listingId, feed_id: "gpu", segment: "gpu_3090", content_expires_at: new Date(NOW.getTime() + 6 * HOUR_MS) },
-    ]);
-    expect(await rows("SELECT listing_id, source, title, seller_feedback_score FROM ebay_live.listing_content")).toEqual([
-      { listing_id: listingId, source: "summary", title: "RTX 3090 Founders Edition 24GB", seller_feedback_score: 250 },
-    ]);
-    expect(await jobs(db, "enrich")).toEqual([{ listingId }]);
-    expect(await rows("SELECT outcome FROM app.seen_item WHERE candidate_at IS NOT NULL")).toEqual([{ outcome: "candidate" }]);
-    expect(await rows("SELECT candidates, new_items FROM app.poll_run")).toEqual([{ candidates: 1, new_items: 2 }]);
-    expect(log.events("candidate_created")).toEqual([
-      { event: "candidate_created", listing_id: listingId, segment: "gpu_3090", source: "poll" },
-    ]);
+    expect(await rows("SELECT watch_from FROM app.product")).toEqual([{ watch_from: NOW }]);
+    expect(ebay.searches().map((url) => url.searchParams.get("q"))).toEqual(["85mm", "(85mm,portrait)"]);
   });
+});
 
+describe("poll handler, candidates (candidate once, caps)", () => {
   it("leaves no job and no candidate rows when the transaction fails after the enqueue", async () => {
-    await pastBaseline("gpu");
+    const searchId = await searchOf(await createProduct());
     const crashing: Pick<JobQueue, "send"> = {
       async send(name, payload, options) {
         await queue.send(name, payload, options);
         throw new Error("crash before commit");
       },
     };
-    const { ebay, poll, job } = setup({ queue: crashing });
-    ebay.searchPages(searchPage([gpuSummary({ price: "450.00", itemCreationDate: recent() })]));
+    const { ebay, poll, job } = setupSearch({ queue: crashing });
+    ebay.searchPages(searchPage([lens()]));
 
-    await expect(poll({ feedId: "gpu" }, job())).rejects.toThrow("crash before commit");
+    await expect(poll({ searchId }, job())).rejects.toThrow("crash before commit");
 
     expect(await jobs(db, "enrich")).toEqual([]);
     expect(await rows("SELECT count(*)::int AS n FROM app.candidate")).toEqual([{ n: 0 }]);
@@ -191,132 +410,117 @@ describe("poll handler, candidates (sections 2.4, 3.2)", () => {
     expect(await rows("SELECT status, error_kind FROM app.poll_run")).toEqual([{ status: "error", error_kind: "db" }]);
   });
 
-  it("makes one candidate of an item that two feeds see at the same time", async () => {
-    await pastBaseline("gpu");
-    await pastBaseline("pc");
-    const same = { legacyItemId: "955500000001", title: "RTX 4090 Founders Edition 24GB", price: "1100.00", itemCreationDate: recent() };
-    const gpu = setup();
-    const pc = setup();
-    gpu.ebay.searchPages(searchPage([gpuSummary(same)]));
-    pc.ebay.searchPages(searchPage([pcSummary(same)]));
+  it("makes one candidate of a listing that two searches see at the same time", async () => {
+    const inLenses = await searchOf(await createProduct());
+    const inCameras = await searchOf(await createProduct({ name: "Lens listed with cameras", categoryId: "31388" }));
+    const same = { legacyItemId: "955500000601" };
+    const first = setupSearch();
+    const second = setupSearch();
+    first.ebay.searchPages(searchPage([lens(same)]));
+    second.ebay.searchPages(searchPage([lens({ ...same, categoryId: "31388" })]));
 
-    await Promise.all([gpu.poll({ feedId: "gpu" }, gpu.job()), pc.poll({ feedId: "pc" }, pc.job())]);
+    await Promise.all([first.poll({ searchId: inLenses }, first.job()), second.poll({ searchId: inCameras }, second.job())]);
 
+    expect(inLenses).not.toBe(inCameras);
     expect(await rows("SELECT count(*)::int AS n FROM app.candidate")).toEqual([{ n: 1 }]);
     expect(await rows("SELECT count(*)::int AS n FROM ebay_live.listing")).toEqual([{ n: 1 }]);
     expect(await jobs(db, "enrich")).toHaveLength(1);
     expect(await rows("SELECT sum(candidates)::int AS n FROM app.poll_run")).toEqual([{ n: 1 }]);
   });
 
-  it("records an in-band item first seen 25 hours after it was listed as too_old, never a candidate", async () => {
-    await pastBaseline("gpu");
-    const { ebay, poll, job } = setup();
-    const old = gpuSummary({ price: "450.00", itemCreationDate: new Date(NOW.getTime() - 25 * HOUR_MS).toISOString() });
-    ebay.searchPages(searchPage([old]), searchPage([old]));
-
-    await poll({ feedId: "gpu" }, job());
-    await poll({ feedId: "gpu" }, job());
-
-    expect(await rows("SELECT outcome FROM app.seen_item WHERE feed_id = 'gpu' AND outcome <> 'baseline'")).toEqual([
-      { outcome: "too_old" },
-    ]);
-    expect(await rows("SELECT count(*)::int AS n FROM app.candidate")).toEqual([{ n: 0 }]);
-  });
-
-  it("makes the 150th candidate of a segment in a Berlin day and records the 151st as over_cap", async () => {
-    await pastBaseline("gpu");
-    // 149 gpu_3090 candidates since Berlin midnight (22:00 UTC the day before), one just before it.
+  it("makes the product's 10th candidate of a Berlin day and records the 11th as over_cap", async () => {
+    // Saved a day earlier, so listings of the last hours are after watch_from.
+    const product = await createProduct({}, new Date(NOW.getTime() - 24 * HOUR_MS));
+    const searchId = await searchOf(product);
+    // 9 candidates since Berlin midnight (22:00 UTC the day before), one just before it.
     await db.admin.query(
       `INSERT INTO app.candidate (item_key, listing_id, feed_id, segment, source, price_cents, shipping_known, rule_version, created_at)
-       SELECT lpad(to_hex(n), 64, '0'), gen_random_uuid(), 'gpu', 'gpu_3090', 'poll', 45000, true, 1,
+       SELECT lpad(to_hex(n), 64, '0'), gen_random_uuid(), $1, $2, 'poll', 25000, true, 1,
               CASE WHEN n = 0 THEN '2026-10-20T21:59:59Z'::timestamptz ELSE '2026-10-20T22:00:00Z'::timestamptz END
-         FROM generate_series(0, 149) AS n`,
+         FROM generate_series(0, 9) AS n`,
+      [searchId, product.key],
     );
-    const { ebay, poll, job } = setup();
-    ebay.searchPages(
-      searchPage([
-        gpuSummary({ legacyItemId: "955500000150", price: "450.00", itemCreationDate: recent() }),
-        gpuSummary({ legacyItemId: "955500000151", price: "460.00", itemCreationDate: recent() }),
-      ]),
-    );
+    const { ebay, poll, job } = setupSearch();
+    ebay.searchPages(searchPage([lens({ legacyItemId: "955500000710" }), lens({ legacyItemId: "955500000711", price: "260.00" })]));
 
-    await poll({ feedId: "gpu" }, job());
+    await poll({ searchId }, job());
 
     const itemKey = createItemKey(ITEM_KEY_SECRET);
-    const outcomes = await rows<{ item_key: string; outcome: string }>(
-      "SELECT item_key, outcome FROM app.seen_item WHERE item_key = ANY($1)",
-      [[itemKey("955500000150").itemKey, itemKey("955500000151").itemKey]],
-    );
+    const outcomes = await rows<{ item_key: string; outcome: string }>("SELECT item_key, outcome FROM app.seen_item");
     expect(Object.fromEntries(outcomes.map((r) => [r.item_key, r.outcome]))).toEqual({
-      [itemKey("955500000150").itemKey]: "candidate",
-      [itemKey("955500000151").itemKey]: "over_cap",
+      [itemKey("955500000710").itemKey]: "candidate",
+      [itemKey("955500000711").itemKey]: "over_cap",
     });
     expect(await rows("SELECT candidates FROM app.poll_run")).toEqual([{ candidates: 1 }]);
   });
 
-  it("makes a tracked item a candidate once its price drops into the band, and only once", async () => {
-    await pastBaseline("gpu");
-    const { ebay, clock, poll, job } = setup();
-    const item = { legacyItemId: "955500000300", itemCreationDate: recent() };
+  it("records an in-band listing first seen 25 hours after it was listed as too_old, never a candidate", async () => {
+    const searchId = await searchOf(await createProduct({}, new Date(NOW.getTime() - 48 * HOUR_MS)));
+    const { ebay, clock, poll, job } = setupSearch();
+    const old = lens({ itemCreationDate: new Date(NOW.getTime() - 25 * HOUR_MS).toISOString() });
+    ebay.searchPages(searchPage([old]), searchPage([old]));
+
+    await poll({ searchId }, job());
+    clock.advance(5 * 60_000);
+    await poll({ searchId }, job());
+
+    expect(await rows("SELECT outcome FROM app.seen_item")).toEqual([{ outcome: "too_old" }]);
+    expect(await rows("SELECT count(*)::int AS n FROM app.candidate")).toEqual([{ n: 0 }]);
+  });
+
+  it("stores the first sighting as the listing's first_seen_at, the time enrich and screen resolve the limit at (spec 6.4)", async () => {
+    const searchId = await searchOf(await createProduct());
+    const { ebay, clock, poll, job } = setupSearch();
+    const item = { legacyItemId: "955500000811" };
+    ebay.searchPages(searchPage([lens({ ...item, price: "350.00" })]), searchPage([lens({ ...item, price: "280.00" })]));
+
+    await poll({ searchId }, job());
+    clock.advance(5 * 60_000);
+    await poll({ searchId }, job());
+
+    expect(await rows("SELECT first_seen_at FROM ebay_live.listing")).toEqual([{ first_seen_at: NOW }]);
+  });
+
+  it("makes a tracked listing a candidate once its price drops into the band, only once, and confirms it after", async () => {
+    const searchId = await searchOf(await createProduct());
+    const { ebay, clock, poll, job } = setupSearch();
+    const item = { legacyItemId: "955500000801" };
     ebay.searchPages(
-      searchPage([gpuSummary({ ...item, price: "650.00" })]),
-      searchPage([gpuSummary({ ...item, price: "480.00" })]),
-      searchPage([gpuSummary({ ...item, price: "470.00" })]),
+      searchPage([lens({ ...item, price: "350.00" })]),
+      searchPage([lens({ ...item, price: "280.00" })]),
+      searchPage([lens({ ...item, price: "270.00" })]),
     );
 
-    await poll({ feedId: "gpu" }, job());
-    const afterFirst = await rows("SELECT outcome FROM app.seen_item WHERE feed_id = 'gpu' AND outcome <> 'baseline'");
-    clock.advance(2 * 60_000);
-    await poll({ feedId: "gpu" }, job());
-    clock.advance(2 * 60_000);
-    await poll({ feedId: "gpu" }, job());
+    await poll({ searchId }, job());
+    const afterFirst = await rows("SELECT outcome FROM app.seen_item");
+    clock.advance(5 * 60_000);
+    await poll({ searchId }, job());
+    clock.advance(5 * 60_000);
+    await poll({ searchId }, job());
 
     expect(afterFirst).toEqual([{ outcome: "above_max" }]);
-    expect(await rows("SELECT price_cents FROM app.candidate")).toEqual([{ price_cents: 48000 }]);
+    expect(await rows("SELECT price_cents FROM app.candidate")).toEqual([{ price_cents: 28000 }]);
     expect(await jobs(db, "enrich")).toHaveLength(1);
-    // The third sighting only confirms the listing (section 6.3).
     expect(await rows("SELECT last_confirmed_at FROM ebay_live.listing")).toEqual([
-      { last_confirmed_at: new Date(NOW.getTime() + 4 * 60_000) },
+      { last_confirmed_at: new Date(NOW.getTime() + 10 * 60_000) },
     ]);
   });
 });
 
-describe("poll handler, a disabled segment (section 3.3)", () => {
-  it("makes no candidate for a segment whose rule is disabled, and one once it is enabled again", async () => {
-    await pastBaseline("gpu");
-    await db.admin.query("UPDATE app.segment_rule SET enabled = false WHERE segment = 'gpu_3090'");
-    const { ebay, poll, job } = setup();
-    const listing = { legacyItemId: "955500000601", title: "RTX 3090 Founders Edition 24GB", price: "450.00", itemCreationDate: recent() };
-    const other = { legacyItemId: "955500000602", title: "RTX 4090 Gaming OC", price: "1100.00", itemCreationDate: recent() };
-    ebay.searchPages(searchPage([gpuSummary(listing), gpuSummary(other)]), searchPage([gpuSummary(listing)]));
+describe("poll handler, request and samples", () => {
+  it("searches the search's category newest first with its conditions, price filter and the German postal code", async () => {
+    const searchId = await searchOf(await createProduct());
+    const { ebay, poll, job } = setupSearch();
 
-    await poll({ feedId: "gpu" }, job());
-
-    expect(await rows("SELECT segment, outcome FROM app.seen_item WHERE segment IS NOT NULL ORDER BY segment")).toEqual([
-      { segment: "gpu_3090", outcome: "segment_off" },
-      { segment: "gpu_4090", outcome: "candidate" },
-    ]);
-    expect(await rows("SELECT segment FROM app.candidate")).toEqual([{ segment: "gpu_4090" }]);
-
-    await db.admin.query("UPDATE app.segment_rule SET enabled = true WHERE segment = 'gpu_3090'");
-    await poll({ feedId: "gpu" }, job());
-
-    expect(await rows("SELECT segment FROM app.candidate ORDER BY segment")).toEqual([{ segment: "gpu_3090" }, { segment: "gpu_4090" }]);
-  });
-});
-
-describe("poll handler, request and samples (sections 3.2, 4)", () => {
-  it("searches the feed's category newest first with its price filter and the German postal code", async () => {
-    const { ebay, poll, job } = setup();
-
-    await poll({ feedId: "ram" }, job());
+    await poll({ searchId }, job());
 
     const [url] = ebay.searches();
+    // The search's floor is 40 % of the EUR 300 max, its read ceiling 2 x the max rounded up to EUR 100.
     expect(Object.fromEntries(url?.searchParams ?? [])).toEqual({
-      q: "(ddr4,ddr5)",
-      category_ids: "170083",
+      q: "85mm",
+      category_ids: LENS_CATEGORY,
       filter:
-        "buyingOptions:{FIXED_PRICE|BEST_OFFER},conditionIds:{1500|2500|3000},deliveryCountry:DE,itemLocationCountry:DE,price:[51..1200],priceCurrency:EUR",
+        "buyingOptions:{FIXED_PRICE|BEST_OFFER},conditionIds:{3000},deliveryCountry:DE,itemLocationCountry:DE,price:[120..600],priceCurrency:EUR",
       sort: "newlyListed",
       limit: "200",
       offset: "0",
@@ -326,46 +530,49 @@ describe("poll handler, request and samples (sections 3.2, 4)", () => {
     expect(search?.headers["x-ebay-c-marketplace-id"]).toBe("EBAY_DE");
   });
 
-  it("samples the titles of first sightings with their reason code, and no later sighting again", async () => {
-    await pastBaseline("gpu");
-    const { ebay, poll, job, log } = setup();
+  it("samples the titles of first sightings with the product and reason code, and no later sighting again", async () => {
+    const product = await createProduct();
+    const searchId = await searchOf(product);
+    const { ebay, clock, poll, job, log } = setupSearch();
     const page = searchPage([
-      gpuSummary({ legacyItemId: "955500000401", title: "RTX 3090 Founders Edition", price: "450.00", itemCreationDate: recent() }),
-      gpuSummary({ legacyItemId: "955500000402", title: "Suche RTX 3090", price: "400.00", itemCreationDate: recent() }),
-      gpuSummary({ legacyItemId: "955500000403", title: "RTX 3090 Gaming", price: "500.00", currency: "USD" }),
+      lens({ legacyItemId: "955500000901", title: "Canon EF 85mm 1.8 USM" }),
+      lens({ legacyItemId: "955500000902", title: "Suche 85mm Objektiv", price: "200.00" }),
+      lens({ legacyItemId: "955500000903", title: "Canon EF 85mm 1.4", currency: "USD" }),
     ]);
     ebay.searchPages(page, page);
 
-    await poll({ feedId: "gpu" }, job());
-    await poll({ feedId: "gpu" }, job());
+    await poll({ searchId }, job());
+    clock.advance(5 * 60_000);
+    await poll({ searchId }, job());
 
-    expect(await rows("SELECT title, segment, landed_cents, outcome, reason FROM ebay_live.classifier_sample ORDER BY title")).toEqual([
-      { title: "RTX 3090 Founders Edition", segment: "gpu_3090", landed_cents: 46000, outcome: "candidate", reason: null },
-      { title: "RTX 3090 Gaming", segment: null, landed_cents: null, outcome: "rejected", reason: "not_eur" },
-      { title: "Suche RTX 3090", segment: null, landed_cents: 41000, outcome: "rejected", reason: "wanted_ad" },
+    expect(await rows("SELECT feed_id, title, segment, landed_cents, outcome, reason FROM ebay_live.classifier_sample ORDER BY title")).toEqual([
+      { feed_id: searchId, title: "Canon EF 85mm 1.4", segment: null, landed_cents: null, outcome: "rejected", reason: "not_eur" },
+      { feed_id: searchId, title: "Canon EF 85mm 1.8 USM", segment: product.key, landed_cents: 26000, outcome: "candidate", reason: null },
+      { feed_id: searchId, title: "Suche 85mm Objektiv", segment: null, landed_cents: 21000, outcome: "rejected", reason: "wanted_ad" },
     ]);
-    expect(await rows("SELECT outcome FROM app.seen_item WHERE feed_id = 'gpu' ORDER BY outcome")).toEqual([
-      { outcome: "baseline" },
+    expect(await rows("SELECT outcome FROM app.seen_item ORDER BY outcome")).toEqual([
       { outcome: "candidate" },
       { outcome: "not_eur" },
       { outcome: "wanted_ad" },
     ]);
     // Titles go to ebay_live only, never to the log (ADR 0024).
-    expect(log.text()).not.toContain("Founders");
+    expect(log.text()).not.toContain("USM");
   });
 });
 
-describe("poll handler, pages (section 3.2)", () => {
+// A listing of the category the product's rules reject: unseen on each call.
+const hood = () => lens({ title: "Gegenlichtblende für 85mm Objektiv", price: "130.00" });
+
+describe("poll handler, pages (spec 5.2 overflow)", () => {
   it("reads page 2 when page 1 was all unseen, and counts a malformed item without processing it", async () => {
-    await pastBaseline("gpu");
-    const { ebay, poll, job } = setup();
-    const accessory = () => gpuSummary({ title: "Backplate für RTX 3090", price: "300.00", itemCreationDate: recent() });
-    const page1 = Array.from({ length: 200 }, accessory);
+    const searchId = await searchOf(await createProduct());
+    const { ebay, poll, job } = setupSearch();
+    const page1 = Array.from({ length: 200 }, hood);
     // No itemId: the schema refuses it.
-    const page2 = [...Array.from({ length: 49 }, accessory), { title: "RTX 3090", price: { value: "450.00", currency: "EUR" } }];
+    const page2 = [...Array.from({ length: 49 }, hood), { title: "Canon EF 85mm", price: { value: "250.00", currency: "EUR" } }];
     ebay.searchPages(searchPage(page1, { next: true }), searchPage(page2, { offset: 200 }));
 
-    await poll({ feedId: "gpu" }, job());
+    await poll({ searchId }, job());
 
     expect(ebay.searches().map((url) => url.searchParams.get("offset"))).toEqual(["0", "200"]);
     expect(await rows("SELECT pages, items, malformed, new_items, cap_reached, calls FROM app.poll_run")).toEqual([
@@ -374,45 +581,44 @@ describe("poll handler, pages (section 3.2)", () => {
     expect(await rows("SELECT count(*)::int AS n FROM app.seen_item WHERE outcome = 'accessory'")).toEqual([{ n: 249 }]);
   });
 
-  it("stops at page 1 with cap_reached once the feed used its 20 overflow pages this Berlin day", async () => {
-    await pastBaseline("gpu");
-    // Earlier polls today with 2 + 2 + 16 overflow pages.
+  it("stops at page 1 with cap_reached once the search used its 10 overflow pages this Berlin day", async () => {
+    const searchId = await searchOf(await createProduct());
+    // Earlier polls of this search today with 2 + 8 overflow pages; one of another search.
     await db.admin.query(
       `INSERT INTO app.poll_run (feed_id, kind, started_at, finished_at, status, pages)
-       VALUES ('gpu', 'poll', $1, $1, 'ok', 3), ('gpu', 'poll', $1, $1, 'ok', 3), ('gpu', 'poll', $1, $1, 'ok', 17)`,
-      [new Date("2026-10-20T22:30:00.000Z")],
+       VALUES ($1, 'poll', $2, $2, 'ok', 3), ($1, 'poll', $2, $2, 'ok', 9), ('s999', 'poll', $2, $2, 'ok', 3)`,
+      [searchId, new Date("2026-10-20T22:30:00.000Z")],
     );
-    const { ebay, poll, job } = setup();
-    ebay.searchPages(searchPage([gpuSummary({ price: "300.00", title: "Backplate für RTX 3090" })], { next: true }));
+    const { ebay, poll, job } = setupSearch();
+    ebay.searchPages(searchPage([hood()], { next: true }));
 
-    await poll({ feedId: "gpu" }, job());
+    await poll({ searchId }, job());
 
     expect(ebay.searches()).toHaveLength(1);
     expect(await rows("SELECT pages, cap_reached FROM app.poll_run WHERE pages = 1")).toEqual([{ pages: 1, cap_reached: true }]);
   });
 
   it("reads at most 3 pages and sets cap_reached when page 3 is still all unseen", async () => {
-    await pastBaseline("gpu");
-    const { ebay, poll, job } = setup();
-    const page = (offset: number) =>
-      searchPage([gpuSummary({ price: "300.00", title: "Backplate für RTX 3090" })], { next: true, offset });
+    const searchId = await searchOf(await createProduct());
+    const { ebay, poll, job } = setupSearch();
+    const page = (offset: number) => searchPage([hood()], { next: true, offset });
     ebay.searchPages(page(0), page(200), page(400), page(600));
 
-    await poll({ feedId: "gpu" }, job());
+    await poll({ searchId }, job());
 
     expect(ebay.searches()).toHaveLength(3);
     expect(await rows("SELECT pages, cap_reached FROM app.poll_run")).toEqual([{ pages: 3, cap_reached: true }]);
   });
 
-  it("reads no page 2 when page 1 holds an item seen before", async () => {
-    await pastBaseline("gpu");
-    const { ebay, poll, job } = setup();
-    const known = gpuSummary({ price: "300.00", title: "Backplate für RTX 3090" });
-    const fresh = gpuSummary({ price: "310.00", title: "Backplate für RTX 3090" });
-    ebay.searchPages(searchPage([known]), searchPage([known, fresh], { next: true }));
+  it("reads no page 2 when page 1 holds a listing seen before", async () => {
+    const searchId = await searchOf(await createProduct());
+    const { ebay, clock, poll, job } = setupSearch();
+    const known = hood();
+    ebay.searchPages(searchPage([known]), searchPage([known, hood()], { next: true }));
 
-    await poll({ feedId: "gpu" }, job());
-    await poll({ feedId: "gpu" }, job());
+    await poll({ searchId }, job());
+    clock.advance(5 * 60_000);
+    await poll({ searchId }, job());
 
     expect(ebay.searches()).toHaveLength(2);
     expect(await rows("SELECT pages, new_items, cap_reached FROM app.poll_run ORDER BY items")).toEqual([
@@ -422,13 +628,13 @@ describe("poll handler, pages (section 3.2)", () => {
   });
 
   it("reserves no further page once the deadline has passed, and keeps what page 1 wrote", async () => {
-    await pastBaseline("gpu");
-    const { ebay, reserve, poll, job } = setup();
+    const searchId = await searchOf(await createProduct());
+    const { ebay, reserve, poll, job } = setupSearch();
     const deadline = new AbortController();
     ebay.beforeSearch(() => deadline.abort());
-    ebay.searchPages(searchPage([gpuSummary({ price: "300.00", title: "Backplate für RTX 3090" })], { next: true }));
+    ebay.searchPages(searchPage([hood()], { next: true }));
 
-    await poll({ feedId: "gpu" }, job(deadline.signal));
+    await poll({ searchId }, job(deadline.signal));
 
     expect(reserve.reservations).toHaveLength(1);
     expect(await rows("SELECT status, error_kind, pages, items FROM app.poll_run")).toEqual([
@@ -437,63 +643,75 @@ describe("poll handler, pages (section 3.2)", () => {
   });
 });
 
-describe("poll handler, run rows (section 2.3)", () => {
+describe("poll handler, run rows", () => {
   it("has the running row committed before the first request", async () => {
-    const { ebay, poll, job } = setup();
+    const searchId = await searchOf(await createProduct());
+    const { ebay, poll, job } = setupSearch();
     const atRequest: unknown[] = [];
     ebay.beforeSearch(async () => {
-      atRequest.push(...(await rows("SELECT kind, status, finished_at FROM app.poll_run")));
+      atRequest.push(...(await rows("SELECT feed_id, kind, status, finished_at FROM app.poll_run")));
     });
 
-    await poll({ feedId: "gpu" }, job());
+    await poll({ searchId }, job());
 
-    expect(atRequest).toEqual([{ kind: "poll", status: "running", finished_at: null }]);
+    expect(atRequest).toEqual([{ feed_id: searchId, kind: "poll", status: "running", finished_at: null }]);
   });
 
   it("ends a hanging request at the deadline and finishes the row as error with error_kind deadline", async () => {
-    const { ebay, poll, job, log } = setup();
+    const searchId = await searchOf(await createProduct());
+    const { ebay, poll, job, log } = setupSearch();
     ebay.respondToSearch((_url, signal) => hang(signal));
 
-    await poll({ feedId: "gpu" }, job(AbortSignal.timeout(300)));
+    await poll({ searchId }, job(AbortSignal.timeout(300)));
 
     expect(await rows("SELECT status, error_kind, calls, finished_at IS NOT NULL AS finished FROM app.poll_run")).toEqual([
       { status: "error", error_kind: "deadline", calls: 1, finished: true },
     ]);
-    expect(log.events("poll_run")).toMatchObject([{ feed: "gpu", status: "error", error_kind: "deadline" }]);
+    expect(log.events("poll_run")).toMatchObject([{ search: searchId, kind: "poll", status: "error", error_kind: "deadline" }]);
   });
 
   it("records quota_refused and sends no search when the reservation is refused", async () => {
-    const { ebay, reserve, poll, job, log } = setup();
+    const searchId = await searchOf(await createProduct());
+    const { ebay, reserve, poll, job, log } = setupSearch();
     reserve.refuse();
 
-    await poll({ feedId: "gpu" }, job());
+    await poll({ searchId }, job());
 
     expect(ebay.searches()).toEqual([]);
     expect(reserve.reservations).toEqual([{ resource: "buy.browse", callClass: "standard", purpose: "poll", minLeft: 1500 }]);
     expect(await rows("SELECT status, error_kind, calls FROM app.poll_run")).toEqual([
       { status: "quota_refused", error_kind: null, calls: 0 },
     ]);
-    expect(log.events("quota_refused")).toMatchObject([{ feed: "gpu", kind: "poll" }]);
+    expect(log.events("quota_refused")).toMatchObject([{ search: searchId, kind: "poll" }]);
   });
 
-  it("fails the run, naming the segment, when a segment rule row is missing", async () => {
-    await pastBaseline("gpu");
-    await db.admin.query("DELETE FROM app.segment_rule WHERE segment = 'gpu_3090'");
-    const { ebay, poll, job } = setup();
-    ebay.searchPages(searchPage([gpuSummary({ price: "450.00", itemCreationDate: recent() })]));
+  it.each([
+    ["was retired when its only product was archived", "archived"],
+    ["polls only a paused product", "paused"],
+  ])("records paused and sends nothing for a search that %s after the job was queued", async (_name, status) => {
+    const product = await createProduct();
+    const searchId = await searchOf(product);
+    const result = await saveProductWithPlan(
+      db.admin,
+      { kind: "update", id: product.id, version: product.version, fields: { ...product.rules, status } },
+      { at: NOW, actor: "system:cli", userId: null, env: SETTINGS_ENV },
+    );
+    if (!result.ok) throw new Error("save refused");
+    const { ebay, reserve, poll, job } = setupSearch();
 
-    await expect(poll({ feedId: "gpu" }, job())).rejects.toThrow("segment gpu_3090 has no rule");
-    expect(await rows("SELECT status, error_kind FROM app.poll_run")).toEqual([{ status: "error", error_kind: "db" }]);
-  });
-
-  it("records paused and sends nothing when the feed was paused after the job was queued", async () => {
-    await db.admin.query("UPDATE app.feed SET enabled = false WHERE id = 'gpu'");
-    const { ebay, reserve, poll, job } = setup();
-
-    await poll({ feedId: "gpu" }, job());
+    await poll({ searchId }, job());
 
     expect(ebay.requests).toEqual([]);
     expect(reserve.reservations).toEqual([]);
-    expect(await rows("SELECT status, calls FROM app.poll_run")).toEqual([{ status: "paused", calls: 0 }]);
+    expect(await rows("SELECT feed_id, status, calls FROM app.poll_run")).toEqual([{ feed_id: searchId, status: "paused", calls: 0 }]);
+  });
+
+  it("records paused and sends nothing for a search id no row has", async () => {
+    const { ebay, poll, job } = setupSearch();
+
+    await poll({ searchId: "s404" }, job());
+
+    expect(ebay.requests).toEqual([]);
+    expect(await rows("SELECT feed_id, kind, status FROM app.poll_run")).toEqual([{ feed_id: "s404", kind: "poll", status: "paused" }]);
   });
 });

@@ -18,6 +18,29 @@ describe("Browse schemas and the synthetic builders", () => {
     expect(new Set(ids.slice(0, 99)).size).toBe(99);
   });
 
+  it("keep itemOriginDate, the date a relisted item first went up (spec 6.2)", () => {
+    const item = buildItemSummary({ itemOriginDate: "2026-09-30T08:00:00.000Z" });
+
+    expect(itemSummarySchema.parse(item).itemOriginDate).toBe("2026-09-30T08:00:00.000Z");
+    expect(itemSummarySchema.safeParse({ ...item, itemOriginDate: "yesterday" }).success).toBe(false);
+  });
+
+  it("keep the category refinements with id, name and match count, and drop their links (spec 6.6)", () => {
+    const page = buildSearchPage([], {
+      refinement: {
+        dominantCategoryId: "177831",
+        categoryDistributions: [
+          { categoryId: "177831", categoryName: "Rennräder", matchCount: 412, refinementHref: "https://api.ebay.com/x" },
+          { categoryId: "177837" },
+        ],
+      },
+    });
+
+    expect(searchPageSchema.parse(page).refinement).toEqual({
+      categoryDistributions: [{ categoryId: "177831", categoryName: "Rennräder", matchCount: 412 }, { categoryId: "177837" }],
+    });
+  });
+
   it("parse the getItem builder's output without losing a declared field", () => {
     const item = buildItem();
 

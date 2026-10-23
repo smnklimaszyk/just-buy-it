@@ -1,0 +1,38 @@
+{
+  "id": "22-lego-10497-complete",
+  "set": "v2",
+  "group": "legitimate",
+  "product_kind": "other",
+  "product": {
+    "name": "LEGO 10497 Galaxy Explorer",
+    "description": "The LEGO Icons set 10497 Galaxy Explorer, complete with all bricks and minifigures. Built once is fine; the box is not needed.",
+    "must_contain": [["10497"]],
+    "must_not_contain": ["nachbau", "kompatibel", "moc"],
+    "conditions": ["new", "used"],
+    "limit_eur": 85
+  },
+  "listing": {
+    "title": "LEGO Icons 10497 Galaxy Explorer vollständig mit Anleitung",
+    "condition": "Gebraucht",
+    "condition_description": "Einmal aufgebaut, vollständig.",
+    "price_eur": 75,
+    "shipping_eur": 6.99,
+    "landed_eur": 81.99,
+    "owner_max_eur": 85,
+    "percent_of_max": 96,
+    "seller": { "feedback_score": 318, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 12,
+    "item_specifics": [
+      { "name": "Marke", "value": "LEGO" },
+      { "name": "Set-Nummer", "value": "10497" },
+      { "name": "Produktlinie", "value": "LEGO Icons" }
+    ],
+    "image_count": 5,
+    "description": "Das Set 10497 Galaxy Explorer wurde einmal aufgebaut und stand dann in der Vitrine, Nichtraucherhaushalt. Ich habe es nach der Anleitung wieder zerlegt und alle Teile gezählt: vollständig, alle vier Minifiguren sind dabei. Die Teile kommen in Beuteln nach Bauabschnitt, mit Anleitung, ohne Originalkarton.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["pass"], "product_match_in": ["match"] }
+}

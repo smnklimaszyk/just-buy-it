@@ -1,13 +1,15 @@
-import type { FeedId, Segment, SellerAccountType } from "@ebay-sniper/domain";
+import type { SellerAccountType } from "@ebay-sniper/domain";
 import type { Queryable } from "./pool.js";
 
+// v2 writes the search id (poll) or the product key (sweep) into feed_id and the product key into
+// segment. Rows written before v2 hold a feed id and a segment.
 export type ListingInput = {
   itemKey: string;
   keyVersion: number;
   itemId: string;
   legacyItemId: string;
-  feedId: FeedId;
-  segment: Segment;
+  feedId: string;
+  segment: string;
   firstSeenAt: Date;
   itemCreationAt: Date | null;
   itemEndAt: Date | null;
@@ -45,8 +47,8 @@ export type Listing = {
   keyVersion: number;
   itemId: string;
   legacyItemId: string;
-  feedId: FeedId;
-  segment: Segment;
+  feedId: string;
+  segment: string;
   firstSeenAt: Date;
   lastConfirmedAt: Date;
   itemCreationAt: Date | null;
@@ -157,8 +159,8 @@ type ListingRow = {
   key_version: number;
   item_id: string;
   legacy_item_id: string;
-  feed_id: FeedId;
-  segment: Segment;
+  feed_id: string;
+  segment: string;
   first_seen_at: Date;
   last_confirmed_at: Date;
   item_creation_at: Date | null;

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { upsertWorkerStatus } from "@ebay-sniper/db";
+import { saveProductWithPlan, upsertWorkerStatus } from "@ebay-sniper/db";
 import { QUEUE_NAMES, QUEUES, type JobQueue, type QueueName, type QueuePayloads } from "@ebay-sniper/db/queue";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { runMailTest, runMain } from "../cli.js";
@@ -12,11 +12,14 @@ import { createShutdown, SHUTDOWN_TIMING } from "../shutdown.js";
 import { createFakeClaude } from "../testing/claude.js";
 import { createTestClock } from "../testing/clock.js";
 import { createTestDatabase, type TestDatabase } from "../testing/database.js";
-import { createFakeEbay, createFakeReserve, fakeLegacyItemId, gpuSummary, searchPage } from "../testing/ebay.js";
+import { createFakeEbay, createFakeReserve, fakeLegacyItemId, itemSummary, searchPage, type SummaryFields } from "../testing/ebay.js";
 import { createTestLog } from "../testing/log.js";
 import { resetTables, startTestQueue } from "../testing/queue.js";
 import { createFakeSmtp, SMTP_TEST_PASSWORD } from "../testing/smtp.js";
 import { createWiring, startWorker } from "../wiring.js";
+
+const lensSummary = (fields: SummaryFields = {}) =>
+  itemSummary({ categoryId: "3323", title: "Canon EF 85mm 1.8 USM", ...fields });
 
 // End to end through the worker wiring (section 10, flow test): poll, enrich, screen, send and
 // relay on fake eBay, Claude and SMTP, with the jobs taken from the pg-boss table in order.
@@ -62,15 +65,45 @@ afterAll(async () => {
   await db.drop();
 }, 30_000);
 
+// Synthetic example product (ADR 0023): a portrait lens in the lens category, saved the way the
+// form saves it two hours before NOW, so listings created an hour ago are after its watch_from.
+const LENS_CATEGORY = "3323";
+const SETTINGS_ENV = { claudeDailyCallLimit: 40, claudeDailySpendLimitMicrousd: 2_000_000, buyerProfile: null };
+let searchId: string;
+let productKey: string;
+
 beforeEach(async () => {
   await resetTables(db);
-  await db.admin.query("UPDATE app.feed SET enabled = true");
-  // The gpu feed has polled before, so the next poll is not a baseline (section 3.2).
   await db.admin.query(
-    `INSERT INTO app.seen_item (item_key, key_version, feed_id, outcome, first_seen_at, last_seen_at)
-     VALUES ($1, 1, 'gpu', 'baseline', $2, $2)`,
-    ["f".repeat(64), new Date(NOW.getTime() - HOUR_MS)],
+    `TRUNCATE app.product, app.product_source, app.product_revision, app.search, app.search_product, app.setting,
+       app.market_value, app.market_request CASCADE`,
   );
+  const saved = await saveProductWithPlan(
+    db.admin,
+    {
+      kind: "create",
+      fields: {
+        name: "Portrait lens",
+        description: "An 85 mm portrait lens for a full-frame camera.",
+        status: "active",
+        categoryId: LENS_CATEGORY,
+        conditionIds: ["3000"],
+        searchWords: ["85mm"],
+        mustWords: [["85mm"]],
+        priceMode: "fixed",
+        maxCents: 52_000,
+        priceDropCheck: true,
+        // Above the 11 listings of the rate-limit test.
+        candidateCapPerDay: 20,
+        buyerProfile: "private",
+      },
+    },
+    { at: new Date(NOW.getTime() - 2 * HOUR_MS), actor: "system:cli", userId: null, env: SETTINGS_ENV },
+  );
+  if (!saved.ok) throw new Error(`save refused: ${JSON.stringify(saved)}`);
+  productKey = saved.product.key;
+  const search = await db.admin.query<{ search_id: string }>("SELECT search_id FROM app.search_product WHERE product_id = $1", [saved.product.id]);
+  searchId = search.rows[0]?.search_id ?? "";
 });
 
 async function rows<T>(sql: string, params: unknown[] = []): Promise<T[]> {
@@ -127,11 +160,11 @@ function setup(env: Record<string, string> = {}) {
     await run(name);
   }
 
-  // The legacy ID of a new in-band RTX 3090 listing that the next poll finds; getItem answers for it.
+  // The legacy ID of a new in-band lens listing that the next poll finds; getItem answers for it.
   function listing(item: Record<string, unknown> = {}): string {
     const legacyItemId = fakeLegacyItemId();
     const created = new Date(NOW.getTime() - HOUR_MS).toISOString();
-    ebay.searchPages(searchPage([gpuSummary({ legacyItemId, price: "450.00", shipping: "10.00", itemCreationDate: created })]));
+    ebay.searchPages(searchPage([lensSummary({ legacyItemId, price: "450.00", shipping: "10.00", itemCreationDate: created })]));
     ebay.item(`v1|${legacyItemId}|0`, itemBody(legacyItemId, item));
     return legacyItemId;
   }
@@ -157,15 +190,15 @@ function itemBody(legacyItemId: string, fields: Record<string, unknown>): Record
   return {
     itemId: `v1|${legacyItemId}|0`,
     legacyItemId,
-    title: "RTX 3090 Founders Edition 24GB",
+    title: "Canon EF 85mm 1.8 USM",
     price: { value: "450.00", currency: "EUR" },
     buyingOptions: ["FIXED_PRICE"],
-    categoryId: "27386",
+    categoryId: LENS_CATEGORY,
     condition: "Gebraucht",
     conditionId: "3000",
     conditionDescription: "Light signs of use.",
-    description: "<p>Card works fine, two years of gaming use.</p>",
-    localizedAspects: [{ name: "Marke", value: "NVIDIA" }],
+    description: "<p>Lens works fine, sharp at f/1.8, two years of portrait use.</p>",
+    localizedAspects: [{ name: "Marke", value: "Canon" }],
     shippingOptions: [{ shippingCostType: "FIXED", shippingCost: { value: "10.00", currency: "EUR" } }],
     itemLocation: { country: "DE" },
     seller: { username: "fake-seller-name", feedbackScore: 250, feedbackPercentage: "99.5", sellerAccountType: "INDIVIDUAL" },
@@ -182,10 +215,10 @@ describe("flow: candidate to email (sections 2.3, 2.4, 6)", () => {
     const { ebay, claude, smtp, log, errors, run, listing } = setup();
     const legacyItemId = listing();
 
-    await queue.send("poll", { feedId: "gpu" });
+    await queue.send("poll", { searchId });
     await run("poll");
     expect(await rows("SELECT segment, decision FROM app.candidate"), "the wired poll handler makes the candidate").toEqual([
-      { segment: "gpu_3090", decision: "pending" },
+      { segment: productKey, decision: "pending" },
     ]);
     await run("enrich");
     expect(await rows("SELECT source FROM ebay_live.listing_content"), "the wired enrich handler stores the getItem content").toEqual([
@@ -205,7 +238,7 @@ describe("flow: candidate to email (sections 2.3, 2.4, 6)", () => {
     const sent = smtp.sent[0];
     expect(sent?.to).toBe(ALERT_TO);
     expect(sent?.from).toEqual({ name: "Just-Buy-It", address: "alerts@example.test" });
-    expect(sent?.subject).toBe("[Deal] RTX 3090: EUR 460 incl. shipping (88% of max) - PASS");
+    expect(sent?.subject).toBe("[Deal] Portrait lens: EUR 460 incl. shipping (88 % of limit) - PASS");
     expect(String(sent?.text)).toContain(`Open on eBay:  https://www.ebay.de/itm/${legacyItemId}`);
     expect(await rows("SELECT status, attempt, smtp_message_id FROM app.alert_delivery")).toEqual([
       { status: "sent", attempt: 1, smtp_message_id: "<fake-1@smtp.test>" },
@@ -218,7 +251,7 @@ describe("flow: candidate to email (sections 2.3, 2.4, 6)", () => {
     const { ebay, claude, smtp, errors, run, listing } = setup({ CLAUDE_DAILY_CALL_LIMIT: "0" });
     listing();
 
-    await queue.send("poll", { feedId: "gpu" });
+    await queue.send("poll", { searchId });
     await run("poll");
     await run("enrich");
     expect(await run("screen")).toBe(0);
@@ -227,8 +260,8 @@ describe("flow: candidate to email (sections 2.3, 2.4, 6)", () => {
     expect(errors).toEqual([]);
     expect(ebay.requests.filter((r) => r.kind === "get_item")).toEqual([]);
     expect(claude.requests).toEqual([]);
-    expect(smtp.sent.map((mail) => mail.subject)).toEqual(["[Deal] RTX 3090: EUR 460 incl. shipping (88% of max) - NOT SCREENED"]);
-    expect(String(smtp.sent[0]?.text)).toContain("Not screened by Claude: cap_reached");
+    expect(smtp.sent.map((mail) => mail.subject)).toEqual(["[Deal] Portrait lens: EUR 460 incl. shipping (88 % of limit) - NOT CHECKED BY CLAUDE"]);
+    expect(String(smtp.sent[0]?.text)).toContain("Not checked by Claude: cap_reached");
     expect(String(smtp.sent[0]?.text)).toContain("Returns:       not fetched");
     expect(await rows("SELECT screened, final_verdict FROM app.alert")).toEqual([{ screened: false, final_verdict: "caution" }]);
   });
@@ -237,9 +270,9 @@ describe("flow: candidate to email (sections 2.3, 2.4, 6)", () => {
     const { ebay, claude, errors, run } = setup();
     const created = new Date(NOW.getTime() - HOUR_MS).toISOString();
     // Found by the poll, gone by getItem: the fake answers 404 for an item it does not know.
-    ebay.searchPages(searchPage([gpuSummary({ price: "450.00", shipping: "10.00", itemCreationDate: created })]));
+    ebay.searchPages(searchPage([lensSummary({ price: "450.00", shipping: "10.00", itemCreationDate: created })]));
 
-    await queue.send("poll", { feedId: "gpu" });
+    await queue.send("poll", { searchId });
     await run("poll");
     await run("enrich");
 
@@ -252,11 +285,9 @@ describe("flow: candidate to email (sections 2.3, 2.4, 6)", () => {
     expect(await rows("SELECT id FROM app.alert")).toEqual([]);
   });
 
-  it("starts from the scheduled poll-tick, which queues the poll of the due feed", async () => {
+  it("starts from the scheduled poll-tick, which queues the poll of the due search", async () => {
     const { smtp, errors, run, tick, listing } = setup();
     listing();
-    // Only the gpu feed is due: the others are paused.
-    await db.admin.query("UPDATE app.feed SET enabled = false WHERE id <> 'gpu'");
 
     await tick("poll-tick");
     expect(await run("poll"), "the wired poll-tick handler queues the poll").toBe(1);
@@ -272,7 +303,7 @@ describe("flow: candidate to email (sections 2.3, 2.4, 6)", () => {
     const { smtp, errors, run, listing } = setup();
     listing();
 
-    await queue.send("sweep", { segment: "gpu_3090" });
+    await queue.send("sweep", { productKey });
     await run("sweep");
     expect(await rows("SELECT source FROM app.candidate"), "the wired sweep handler makes the candidate").toEqual([{ source: "sweep" }]);
     await run("enrich");
@@ -286,7 +317,7 @@ describe("flow: candidate to email (sections 2.3, 2.4, 6)", () => {
   it("leaves no listing content or message once the scheduled purge runs after the 6-hour lifetime", async () => {
     const { clock, errors, run, tick, listing } = setup();
     listing();
-    await queue.send("poll", { feedId: "gpu" });
+    await queue.send("poll", { searchId });
     await run("poll");
     await run("enrich");
     await run("screen");
@@ -310,7 +341,7 @@ describe("flow: Claude failures (sections 2.4, 5.5)", () => {
     // Attempt 1 hangs until the job's deadline; the retry gets a pass.
     claude.hang();
 
-    await queue.send("poll", { feedId: "gpu" });
+    await queue.send("poll", { searchId });
     await run("poll");
     await run("enrich");
     await run("screen", () => AbortSignal.timeout(100));
@@ -331,7 +362,7 @@ describe("flow: Claude failures (sections 2.4, 5.5)", () => {
     claude.status(503);
     claude.status(529);
 
-    await queue.send("poll", { feedId: "gpu" });
+    await queue.send("poll", { searchId });
     await run("poll");
     await run("enrich");
     await run("screen");
@@ -342,8 +373,8 @@ describe("flow: Claude failures (sections 2.4, 5.5)", () => {
     expect(await rows("SELECT status, attempt, failure_code FROM app.screening")).toEqual([
       { status: "failed", attempt: 2, failure_code: "provider_unavailable" },
     ]);
-    expect(smtp.sent.map((mail) => mail.subject)).toEqual(["[Deal] RTX 3090: EUR 460 incl. shipping (88% of max) - NOT SCREENED"]);
-    expect(String(smtp.sent[0]?.text)).toContain("Not screened by Claude: provider_unavailable");
+    expect(smtp.sent.map((mail) => mail.subject)).toEqual(["[Deal] Portrait lens: EUR 460 incl. shipping (88 % of limit) - NOT CHECKED BY CLAUDE"]);
+    expect(String(smtp.sent[0]?.text)).toContain("Not checked by Claude: provider_unavailable");
   });
 });
 
@@ -351,9 +382,9 @@ describe("flow: block routing (sections 5.6, 5.7)", () => {
   it("emails a model-only block marked Claude says block", async () => {
     const { claude, smtp, errors, run, listing } = setup();
     listing();
-    claude.answer({ verdict: "block", product_match: "mismatch", risk_flags: ["wrong_model"], reason: "The photos show a different card." });
+    claude.answer({ verdict: "block", product_match: "match", risk_flags: ["description_contradicts_title"], reason: "The description says the lens is broken." });
 
-    await queue.send("poll", { feedId: "gpu" });
+    await queue.send("poll", { searchId });
     await run("poll");
     await run("enrich");
     await run("screen");
@@ -363,15 +394,15 @@ describe("flow: block routing (sections 5.6, 5.7)", () => {
     expect(await rows("SELECT final_verdict, model_verdict, blocked_by_code FROM app.alert")).toEqual([
       { final_verdict: "block", model_verdict: "block", blocked_by_code: false },
     ]);
-    expect(smtp.sent.map((mail) => mail.subject)).toEqual(["[Deal] RTX 3090: EUR 460 incl. shipping (88% of max) - CLAUDE SAYS BLOCK"]);
-    expect(String(smtp.sent[0]?.text)).toContain("The photos show a different card.");
+    expect(smtp.sent.map((mail) => mail.subject)).toEqual(["[Deal] Portrait lens: EUR 460 incl. shipping (88 % of limit) - CLAUDE SAYS BLOCK"]);
+    expect(String(smtp.sent[0]?.text)).toContain("The description says the lens is broken.");
   });
 
   it("keeps an alert with an off-platform payment phrase on the dashboard only: no delivery, no email", async () => {
     const { smtp, errors, run, listing } = setup();
     listing({ description: "<p>Zahlung nur per PayPal Freunde, sonst keine Abwicklung.</p>" });
 
-    await queue.send("poll", { feedId: "gpu" });
+    await queue.send("poll", { searchId });
     await run("poll");
     await run("enrich");
     await run("screen");
@@ -389,7 +420,7 @@ describe("flow: block routing (sections 5.6, 5.7)", () => {
     const { smtp, errors, run, listing } = setup();
     listing({ description: "<p>Payment only by bank transfer to DE89 3704 0044 0532 0130 00 please.</p>" });
 
-    await queue.send("poll", { feedId: "gpu" });
+    await queue.send("poll", { searchId });
     await run("poll");
     await run("enrich");
     await run("screen");
@@ -407,7 +438,7 @@ describe("flow: block routing (sections 5.6, 5.7)", () => {
     const { smtp, errors, run, listing } = setup();
     listing({ description: "<p>Schreib mir per WhatsApp 0151 2345678 für Fragen.</p>" });
 
-    await queue.send("poll", { feedId: "gpu" });
+    await queue.send("poll", { searchId });
     await run("poll");
     await run("enrich");
     await run("screen");
@@ -500,8 +531,8 @@ describe("heartbeat (section 2.6)", () => {
 
 describe("worker start (section 2.6)", () => {
   it("starts pg-boss with the schedules and every handler, writes worker_status, beats, and stops on shutdown", async () => {
-    // No feed is due, so the schedules running during the test call no fake.
-    await db.admin.query("UPDATE app.feed SET enabled = false");
+    // No product, so the schedules running during the test call no fake.
+    await db.admin.query("TRUNCATE app.product CASCADE");
     const aliveFile = join(tmpdir(), `worker-alive-${randomUUID()}`);
     const log = createTestLog();
     const exit = vi.fn();
@@ -519,6 +550,8 @@ describe("worker start (section 2.6)", () => {
         { git_sha: ENV.GIT_SHA, smtp_configured: true, claude_configured: true },
       ]);
       expect(await rows("SELECT name, cron FROM pgboss.schedule ORDER BY name")).toEqual([
+        { name: "held-requeue", cron: "5 22,23 * * *" },
+        { name: "market-nightly", cron: "0 2 * * *" },
         { name: "poll-tick", cron: "* * * * *" },
         { name: "purge", cron: "*/15 * * * *" },
         { name: "relay", cron: "* * * * *" },
@@ -550,7 +583,7 @@ describe("worker start (section 2.6)", () => {
   });
 
   it("logs a lost pool connection by its code only and keeps running", async () => {
-    await db.admin.query("UPDATE app.feed SET enabled = false");
+    await db.admin.query("TRUNCATE app.product CASCADE");
     const aliveFile = join(tmpdir(), `worker-alive-${randomUUID()}`);
     const log = createTestLog();
     const worker = await startWorker(parseEnv({ ...ENV, DATABASE_URL: db.workerUrl }), {
@@ -596,8 +629,7 @@ describe("worker start (section 2.6)", () => {
   });
 
   it("works a job of every queue in the registry", async () => {
-    // Feeds paused and unknown ids: every job runs its handler and changes nothing.
-    await db.admin.query("UPDATE app.feed SET enabled = false");
+    // No products and unknown ids: every job runs its handler and changes nothing.
     const aliveFile = join(tmpdir(), `worker-alive-${randomUUID()}`);
     const log = createTestLog();
     const worker = await startWorker(parseEnv({ ...ENV, DATABASE_URL: db.workerUrl }), {
@@ -611,13 +643,17 @@ describe("worker start (section 2.6)", () => {
     try {
       const payloads: { [N in QueueName]: QueuePayloads[N] } = {
         "poll-tick": {},
-        poll: { feedId: "gpu" },
-        sweep: { segment: "gpu_3090" },
+        poll: { searchId: "s999" },
+        sweep: { productKey: "p_unknown" },
         enrich: { listingId: randomUUID() },
         screen: { listingId: randomUUID() },
         send: { deliveryId: randomUUID() },
         relay: {},
         purge: {},
+        "market-nightly": {},
+        "market-snapshot": { productId: randomUUID() },
+        "category-suggest": { requestId: randomUUID() },
+        "held-requeue": {},
       };
       // A cron job of an exclusive queue (poll-tick, relay, purge) can already be queued when the
       // test sends, which then returns null; that job counts the same.
@@ -765,8 +801,8 @@ describe("command line (sections 2.6, 6.5)", () => {
   }
 
   it("with no command starts the worker, and SIGTERM shuts it down with exit 0", async () => {
-    // No feed is due, so the schedules running during the test call no fake.
-    await db.admin.query("UPDATE app.feed SET enabled = false");
+    // No product, so the schedules running during the test call no fake.
+    await db.admin.query("TRUNCATE app.product CASCADE");
     const fake = processFake([], { ...ENV, DATABASE_URL: db.workerUrl, LOG_LEVEL: "warn" });
 
     await runMain(fake.deps);
@@ -885,7 +921,7 @@ describe("flow: SMTP and the relay retry path (sections 2.4, 6.4, 6.5)", () => {
     const { clock, smtp, errors, run, tick, listing, rewire } = setup(SMTP_UNSET);
     listing();
 
-    await queue.send("poll", { feedId: "gpu" });
+    await queue.send("poll", { searchId });
     await run("poll");
     await run("enrich");
     await run("screen");
@@ -917,7 +953,7 @@ describe("flow: SMTP and the relay retry path (sections 2.4, 6.4, 6.5)", () => {
     listing();
     smtp.reply(421);
 
-    await queue.send("poll", { feedId: "gpu" });
+    await queue.send("poll", { searchId });
     await run("poll");
     await run("enrich");
     await run("screen");
@@ -944,11 +980,11 @@ describe("flow: SMTP and the relay retry path (sections 2.4, 6.4, 6.5)", () => {
     const created = new Date(NOW.getTime() - HOUR_MS).toISOString();
     const legacyItemIds = Array.from({ length: 11 }, () => fakeLegacyItemId());
     ebay.searchPages(
-      searchPage(legacyItemIds.map((legacyItemId) => gpuSummary({ legacyItemId, price: "450.00", shipping: "10.00", itemCreationDate: created }))),
+      searchPage(legacyItemIds.map((legacyItemId) => lensSummary({ legacyItemId, price: "450.00", shipping: "10.00", itemCreationDate: created }))),
     );
     for (const legacyItemId of legacyItemIds) ebay.item(`v1|${legacyItemId}|0`, itemBody(legacyItemId, {}));
 
-    await queue.send("poll", { feedId: "gpu" });
+    await queue.send("poll", { searchId });
     await run("poll");
     await run("enrich");
     await run("screen");

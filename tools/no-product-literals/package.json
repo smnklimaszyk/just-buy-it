@@ -1,0 +1,16 @@
+{
+  "name": "@ebay-sniper/no-product-literals",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "tdd-guard-vitest": "0.2.0",
+    "typescript": "6.0.3",
+    "vitest": "5.0.4"
+  }
+}

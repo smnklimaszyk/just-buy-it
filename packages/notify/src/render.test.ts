@@ -1,13 +1,11 @@
-import { startingSegmentRule, type Segment, type SegmentRule } from "@ebay-sniper/domain";
 import { describe, expect, it } from "vitest";
 import { renderAlertEmail, type AlertEmailInput } from "./render.js";
-
-const gpu3090: SegmentRule = { ...startingSegmentRule("gpu_3090"), ruleVersion: 3 };
 
 // Every detail invented for the test.
 const passAlert: AlertEmailInput = {
   deliveryId: "0199f0a0-0000-7000-8000-000000000001",
-  rule: gpu3090,
+  product: { name: "Graphics card", perGb: false },
+  limit: { limitCents: 52_000, priceMode: "fixed", marketValueCents: null },
   buyerProfile: "company",
   legacyItemId: "123456789012",
   title: "NVIDIA GeForce RTX 3090 Founders Edition 24GB",
@@ -18,7 +16,7 @@ const passAlert: AlertEmailInput = {
   condition: "Used",
   seller: { accountType: "private", feedbackScore: 250, feedbackPercent: 100 },
   returns: { accepted: false, periodDays: null },
-  flags: ["mining_history", "best_offer"],
+  flags: ["untested", "best_offer"],
   descriptionText: "Two years of use, original box.",
   screening: {
     screened: true,
@@ -33,23 +31,24 @@ const passAlert: AlertEmailInput = {
 describe("renderAlertEmail", () => {
   it("renders the subject and the plain text body of a PASS alert", () => {
     const email = renderAlertEmail(passAlert);
-    expect(email.subject).toBe("[Deal] RTX 3090: EUR 489 incl. shipping (94% of max) - PASS");
+    expect(email.subject).toBe("[Deal] Graphics card: EUR 489 incl. shipping (94 % of limit) - PASS");
     expect(email.text).toBe(
       [
         "NVIDIA GeForce RTX 3090 Founders Edition 24GB",
         "As of 14:32 CEST, 21 Oct 2026",
         "",
+        "Product:       Graphics card",
         "Price:         EUR 459.00",
         "Shipping:      EUR 30.00",
         "Landed price:  EUR 489.00",
-        "Rule:          RTX 3090, landed price at most EUR 520.00 (rules v3)",
-        "               94% of your maximum",
+        "Limit:         EUR 520.00",
+        "               94 % of your limit",
         "Condition:     Used",
         "Seller:        private, 250 ratings, 100% positive",
         "Returns:       none",
-        "Flags:         mining history, best offer possible",
+        "Flags:         untested, best offer possible",
         "",
-        "Claude screening: PASS",
+        "Claude check: PASS",
         "Reason:        Clear description, original box, normal used-market risk.",
         "Risk flags:    none",
         "",
@@ -77,7 +76,7 @@ describe("renderAlertEmail", () => {
     expect(html).toContain("<th>Seller</th><td>private, 250 ratings, 100% positive</td>");
     expect(html).toContain("As of 14:32 CEST, 21 Oct 2026");
     expect(html).toContain('<a href="https://www.ebay.de/itm/123456789012">https://www.ebay.de/itm/123456789012</a>');
-    expect(html).toContain("Claude screening: PASS");
+    expect(html).toContain("Claude check: PASS");
     expect(html).toContain("Clear description, original box, normal used-market risk.");
     expect(html).toContain("Buy only through eBay checkout. Never pay or talk outside eBay.");
     expect(html).toContain("Delivery 0199f0a0-0000-7000-8000-000000000001 - just-buy-it");
@@ -86,7 +85,7 @@ describe("renderAlertEmail", () => {
   it("marks a caution verdict CHECK, lists the risk flags and boxes the screening in HTML", () => {
     const email = renderAlertEmail({
       ...passAlert,
-      rule: { ...startingSegmentRule("gpu_4090"), ruleVersion: 2 },
+      limit: { limitCents: 128_000, priceMode: "fixed", marketValueCents: null },
       priceCents: 115_000,
       shippingCents: 3_000,
       screening: {
@@ -97,15 +96,15 @@ describe("renderAlertEmail", () => {
         reason: "Mining use stated; ask about the fan condition.",
       },
     });
-    expect(email.subject).toBe("[Deal] RTX 4090: EUR 1,180 incl. shipping (92% of max) - CHECK");
+    expect(email.subject).toBe("[Deal] Graphics card: EUR 1,180 incl. shipping (92 % of limit) - CHECK");
     expect(email.text).toContain(
       [
-        "Claude screening: CHECK BEFORE BUYING",
+        "Claude check: CHECK BEFORE BUYING",
         "Reason:        Mining use stated; ask about the fan condition.",
         "Risk flags:    mining history, no returns",
       ].join("\n"),
     );
-    expect(email.html).toMatch(/<div class="warning"[^>]*>\s*<p><strong>Claude screening: CHECK BEFORE BUYING<\/strong>/);
+    expect(email.html).toMatch(/<div class="warning"[^>]*>\s*<p><strong>Claude check: CHECK BEFORE BUYING<\/strong>/);
     expect(renderAlertEmail(passAlert).html).not.toContain('class="warning"');
   });
 
@@ -114,38 +113,30 @@ describe("renderAlertEmail", () => {
       ...passAlert,
       screening: { screened: true, verdict: "pass", productMatch: "match", riskFlags: ["prompt_injection"], reason: "Looks fine." },
     });
-    expect(email.subject).toBe("[Deal] RTX 3090: EUR 489 incl. shipping (94% of max) - CHECK");
+    expect(email.subject).toBe("[Deal] Graphics card: EUR 489 incl. shipping (94 % of limit) - CHECK");
     expect(email.text).toContain(
-      ["Claude screening: CHECK BEFORE BUYING", "Reason:        Looks fine.", "Risk flags:    prompt injection"].join("\n"),
+      ["Claude check: CHECK BEFORE BUYING", "Reason:        Looks fine.", "Risk flags:    prompt injection"].join("\n"),
     );
-  });
-
-  it("names the rule by its key when this release does not know the key", () => {
-    // A product key as v2 writes it; the type only knows the six segments.
-    const rule = { ...gpu3090, segment: "p_k3x9ab2cde" as Segment };
-    const email = renderAlertEmail({ ...passAlert, rule });
-    expect(email.subject).toBe("[Deal] p_k3x9ab2cde: EUR 489 incl. shipping (94% of max) - PASS");
-    expect(email.text).toContain("Rule:          p_k3x9ab2cde, landed price at most EUR 520.00 (rules v3)");
   });
 
   it("marks a model-only block CLAUDE SAYS BLOCK in subject and body, with the reason", () => {
     const email = renderAlertEmail({
       ...passAlert,
-      rule: { ...startingSegmentRule("gpu_3090ti"), ruleVersion: 1 },
+      limit: { limitCents: 60_000, priceMode: "fixed", marketValueCents: null },
       priceCents: 53_000,
       shippingCents: 3_000,
       screening: {
         screened: true,
         verdict: "block",
-        productMatch: "mismatch",
+        productMatch: "match",
         riskFlags: ["wrong_model"],
         reason: "The description names a different card than the title.",
       },
     });
-    expect(email.subject).toBe("[Deal] RTX 3090 Ti: EUR 560 incl. shipping (93% of max) - CLAUDE SAYS BLOCK");
+    expect(email.subject).toBe("[Deal] Graphics card: EUR 560 incl. shipping (93 % of limit) - CLAUDE SAYS BLOCK");
     expect(email.text).toContain(
       [
-        "Claude screening: CLAUDE SAYS BLOCK",
+        "Claude check: CLAUDE SAYS BLOCK",
         "Reason:        The description names a different card than the title.",
         "Risk flags:    wrong model",
         "Code checks found no payment or contact scam sign. Read the listing carefully before buying.",
@@ -162,27 +153,25 @@ describe("renderAlertEmail", () => {
       descriptionText: null,
       screening: { screened: false, code: "cap_reached" },
     });
-    expect(email.subject).toBe("[Deal] RTX 3090: EUR 489 incl. shipping (94% of max) - NOT SCREENED");
+    expect(email.subject).toBe("[Deal] Graphics card: EUR 489 incl. shipping (94 % of limit) - NOT CHECKED BY CLAUDE");
     expect(email.text).toContain("Returns:       not fetched\n");
     expect(email.text).toContain(
-      ["", "Claude screening: NOT SCREENED", "Not screened by Claude: cap_reached. Check the listing yourself.", ""].join(
-        "\n",
-      ),
+      ["", "Claude check: NOT CHECKED", "Not checked by Claude: cap_reached. Check the listing yourself.", ""].join("\n"),
     );
     expect(email.text).not.toContain("Reason:");
     expect(email.html).toContain('class="warning"');
-    expect(email.html).toContain("Not screened by Claude: cap_reached. Check the listing yourself.");
+    expect(email.html).toContain("Not checked by Claude: cap_reached. Check the listing yourself.");
   });
 
   it("never counts unknown shipping as zero: the landed price is at least the item price", () => {
     const email = renderAlertEmail({ ...passAlert, shippingCents: null, flags: ["shipping_unknown"] });
-    expect(email.subject).toBe("[Deal] RTX 3090: EUR 459 + unknown shipping (88% of max) - PASS");
+    expect(email.subject).toBe("[Deal] Graphics card: EUR 459 + unknown shipping (88 % of limit) - PASS");
     expect(email.text).toContain(
       [
         "Price:         EUR 459.00",
         "Shipping:      unknown, landed price at least EUR 459.00",
-        "Rule:          RTX 3090, landed price at most EUR 520.00 (rules v3)",
-        "               88% of your maximum",
+        "Limit:         EUR 520.00",
+        "               88 % of your limit",
       ].join("\n"),
     );
     expect(email.text).not.toContain("Landed price:");
@@ -192,7 +181,8 @@ describe("renderAlertEmail", () => {
   it("shows the per-GB price for a RAM segment", () => {
     const email = renderAlertEmail({
       ...passAlert,
-      rule: startingSegmentRule("ram_ddr5"),
+      product: { name: "Desktop memory", perGb: true },
+      limit: { limitCents: 560, priceMode: "fixed", marketValueCents: null },
       title: "2x16GB DDR5-6000 desktop kit",
       priceCents: 15_500,
       shippingCents: 1_000,
@@ -200,14 +190,52 @@ describe("renderAlertEmail", () => {
       flags: [],
       screening: { screened: false, code: "not_configured" },
     });
-    expect(email.subject).toBe("[Deal] DDR5 32 GB: EUR 165 incl. shipping (EUR 5.16/GB) - NOT SCREENED");
+    expect(email.subject).toBe(
+      "[Deal] Desktop memory 32 GB: EUR 165 incl. shipping (EUR 5.16 per GB, 92 % of limit) - NOT CHECKED BY CLAUDE",
+    );
     expect(email.text).toContain(
       [
         "Landed price:  EUR 165.00",
-        "Rule:          DDR5, landed price at most EUR 5.60/GB (rules v1)",
-        "               32 GB at EUR 5.16/GB, 92% of your maximum",
+        "Limit:         EUR 5.60 per GB",
+        "               32 GB at EUR 5.16 per GB, 92 % of your limit",
       ].join("\n"),
     );
+  });
+
+  it("says how far below the typical asking price the deal is when the limit came from the market value", () => {
+    const email = renderAlertEmail({
+      ...passAlert,
+      limit: { limitCents: 52_000, priceMode: "below_market", marketValueCents: 59_600 },
+    });
+    expect(email.subject).toBe("[Deal] Graphics card: EUR 489 incl. shipping (18 % below the typical asking price) - PASS");
+    expect(email.text).toContain(
+      ["Limit:         EUR 520.00", "               18 % below the typical asking price of EUR 596.00"].join("\n"),
+    );
+    expect(email.text).not.toContain("using your cap");
+  });
+
+  it("says using your cap when a market-mode product had no reliable typical asking price", () => {
+    const email = renderAlertEmail({
+      ...passAlert,
+      limit: { limitCents: 55_000, priceMode: "below_market", marketValueCents: null },
+    });
+    expect(email.subject).toBe("[Deal] Graphics card: EUR 489 incl. shipping (using your cap) - PASS");
+    expect(email.text).toContain(["Limit:         EUR 550.00, using your cap", "               89 % of your limit"].join("\n"));
+    expect(email.text).not.toContain("typical asking price");
+  });
+
+  it("says Claude is not sure this is the product when it answered unclear", () => {
+    const email = renderAlertEmail({
+      ...passAlert,
+      screening: { screened: true, verdict: "pass", productMatch: "unclear", riskFlags: [], reason: "The title names no size." },
+    });
+    expect(email.text).toContain("Risk flags:    none\nClaude is not sure this is the product.\n");
+    expect(renderAlertEmail(passAlert).text).not.toContain("not sure");
+  });
+
+  it("names the warn words of the product that matched among the flags", () => {
+    const { text } = renderAlertEmail({ ...passAlert, flags: ["best_offer", "warn:refurb"] });
+    expect(text).toContain('Flags:         best offer possible, contains "refurb"\n');
   });
 
   it("describes the return terms getItem gave", () => {
@@ -291,7 +319,7 @@ describe("renderAlertEmail", () => {
     expect(email.subject).toMatch(/ - CHECK$/);
     expect(email.text).toContain(
       [
-        "Claude screening: CHECK BEFORE BUYING",
+        "Claude check: CHECK BEFORE BUYING",
         "Reason:        Clear description, original box, normal used-market risk.",
         "Risk flags:    none",
         "Code checks:   payment mention, hidden characters",

@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "@ebay-sniper/db": "workspace:*",
-    "@ebay-sniper/domain": "workspace:*",
     "@ebay-sniper/ebay": "workspace:*",
     "@ebay-sniper/logging": "workspace:*",
     "@hono/node-server": "2.1.5",

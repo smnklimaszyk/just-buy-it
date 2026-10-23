@@ -1,9 +1,9 @@
-import { FEED_IDS, SEGMENTS, type FeedId, type Segment } from "@ebay-sniper/domain";
+import { isProductKey, isSearchId } from "@ebay-sniper/domain";
 import type { Queue } from "pg-boss";
 
 // The only list of queues (section 2.3). Handlers, schedules and the migrate step read it from here.
 
-export const QUEUE_NAMES = ["poll-tick", "poll", "sweep", "enrich", "screen", "send", "relay", "purge"] as const;
+export const QUEUE_NAMES = ["poll-tick", "poll", "sweep", "enrich", "screen", "send", "relay", "purge", "market-nightly", "market-snapshot", "category-suggest", "held-requeue"] as const;
 export type QueueName = (typeof QUEUE_NAMES)[number];
 
 type Empty = Record<string, never>;
@@ -11,13 +11,17 @@ type Empty = Record<string, never>;
 // Surrogate keys only (ADR 0015 A): never an item ID, title or URL.
 export type QueuePayloads = {
   "poll-tick": Empty;
-  poll: { feedId: FeedId };
-  sweep: { segment: Segment };
+  poll: { searchId: string };
+  sweep: { productKey: string };
   enrich: { listingId: string };
   screen: { listingId: string };
   send: { deliveryId: string };
   relay: Empty;
   purge: Empty;
+  "market-nightly": Empty;
+  "market-snapshot": { productId: string };
+  "category-suggest": { requestId: string };
+  "held-requeue": Empty;
 };
 
 export class QueuePayloadError extends Error {}
@@ -52,18 +56,16 @@ function uuidField(queue: QueueName, data: unknown, field: string): string {
   return value;
 }
 
-function parseFeedId(data: unknown): { feedId: FeedId } {
-  const value = fields("poll", data, ["feedId"]).feedId;
-  const feedId = FEED_IDS.find((id) => id === value);
-  if (feedId === undefined) throw invalid("poll", "feedId");
-  return { feedId };
+function parseSearchId(data: unknown): { searchId: string } {
+  const value = fields("poll", data, ["searchId"]).searchId;
+  if (!isSearchId(value)) throw invalid("poll", "searchId");
+  return { searchId: value };
 }
 
-function parseSegment(data: unknown): { segment: Segment } {
-  const value = fields("sweep", data, ["segment"]).segment;
-  const segment = SEGMENTS.find((s) => s === value);
-  if (segment === undefined) throw invalid("sweep", "segment");
-  return { segment };
+function parseProductKey(data: unknown): { productKey: string } {
+  const value = fields("sweep", data, ["productKey"]).productKey;
+  if (!isProductKey(value)) throw invalid("sweep", "productKey");
+  return { productKey: value };
 }
 
 export type QueueDefinition<N extends QueueName> = {
@@ -98,8 +100,8 @@ export const QUEUES: { [N in QueueName]: QueueDefinition<N> } = {
   // Up to 3 pages, each up to 3 attempts of 10 s. The next tick is the retry.
   poll: {
     name: "poll",
-    parse: parseFeedId,
-    singletonKey: (payload) => payload.feedId,
+    parse: parseSearchId,
+    singletonKey: (payload) => payload.searchId,
     policy: "exclusive",
     cron: null,
     deadlineMs: 100_000,
@@ -110,8 +112,8 @@ export const QUEUES: { [N in QueueName]: QueueDefinition<N> } = {
   },
   sweep: {
     name: "sweep",
-    parse: parseSegment,
-    singletonKey: (payload) => payload.segment,
+    parse: parseProductKey,
+    singletonKey: (payload) => payload.productKey,
     policy: "exclusive",
     cron: null,
     deadlineMs: 40_000,
@@ -179,6 +181,60 @@ export const QUEUES: { [N in QueueName]: QueueDefinition<N> } = {
     cron: "*/15 * * * *",
     deadlineMs: 120_000,
     expireInSeconds: 600,
+    retryLimit: 0,
+    retryDelaySeconds: 0,
+    localConcurrency: 1,
+  },
+  // 02:00 UTC is 03:00 CET and 04:00 CEST, inside the 03:00-05:00 Berlin window (spec 6.3). It
+  // only queues one market-snapshot job per product that is not archived.
+  "market-nightly": {
+    name: "market-nightly",
+    parse: empty("market-nightly"),
+    singletonKey: () => null,
+    policy: "exclusive",
+    cron: "0 2 * * *",
+    deadlineMs: 30_000,
+    expireInSeconds: 120,
+    retryLimit: 0,
+    retryDelaySeconds: 0,
+    localConcurrency: 1,
+  },
+  // Up to 3 pages, each up to 3 attempts of 10 s, like a poll.
+  "market-snapshot": {
+    name: "market-snapshot",
+    parse: (data) => ({ productId: uuidField("market-snapshot", data, "productId") }),
+    singletonKey: (payload) => payload.productId,
+    policy: "exclusive",
+    cron: null,
+    deadlineMs: 100_000,
+    expireInSeconds: 150,
+    retryLimit: 0,
+    retryDelaySeconds: 0,
+    localConcurrency: 1,
+  },
+  // One Browse call with up to 3 attempts of 10 s.
+  "category-suggest": {
+    name: "category-suggest",
+    parse: (data) => ({ requestId: uuidField("category-suggest", data, "requestId") }),
+    singletonKey: (payload) => payload.requestId,
+    policy: "exclusive",
+    cron: null,
+    deadlineMs: 40_000,
+    expireInSeconds: 90,
+    retryLimit: 0,
+    retryDelaySeconds: 0,
+    localConcurrency: 1,
+  },
+  // 22:05 and 23:05 UTC are 00:05 Berlin in summer and in winter; the handler acts only in Berlin
+  // hour 0 (spec 4.4).
+  "held-requeue": {
+    name: "held-requeue",
+    parse: empty("held-requeue"),
+    singletonKey: () => null,
+    policy: "exclusive",
+    cron: "5 22,23 * * *",
+    deadlineMs: 20_000,
+    expireInSeconds: 60,
     retryLimit: 0,
     retryDelaySeconds: 0,
     localConcurrency: 1,

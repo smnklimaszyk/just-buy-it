@@ -1,7 +1,15 @@
-import { insertCandidate, insertListing, listingsToEnrich, upsertListingContent, type DbPool } from "@ebay-sniper/db";
+import {
+  insertCandidate,
+  insertListing,
+  listingsToEnrich,
+  saveProductWithPlan,
+  upsertListingContent,
+  type DbPool,
+  type StoredProduct,
+} from "@ebay-sniper/db";
 import type { JobQueue } from "@ebay-sniper/db/queue";
-import type { ListingFlag, Segment } from "@ebay-sniper/domain";
-import { createClaudeScreener, WORST_CASE_COST_MICROUSD } from "@ebay-sniper/llm";
+import { berlinDay } from "@ebay-sniper/domain";
+import { createClaudeScreener, PROMPT_VERSION, worstCaseCostMicrousd } from "@ebay-sniper/llm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createItemKey } from "../item-key.js";
 import { CLAUDE_TEST_KEY, createFakeClaude } from "../testing/claude.js";
@@ -18,9 +26,14 @@ const NOW = new Date("2026-10-21T10:00:00.000Z");
 const HOUR_MS = 3_600_000;
 const RECIPIENT = "owner@example.test";
 const itemKey = createItemKey(ITEM_KEY_SECRET);
+// The code default of the claude.model setting.
+const MODEL = "claude-sonnet-5-5";
+const SETTINGS_ENV = { claudeDailyCallLimit: 40, claudeDailySpendLimitMicrousd: 2_000_000, buyerProfile: null };
+const TITLE = "Sigma 85mm F1.4 DG DN Art Sony E";
 
 let db: TestDatabase;
 let queue: JobQueue;
+let product: StoredProduct;
 
 beforeAll(async () => {
   db = await createTestDatabase();
@@ -32,29 +45,61 @@ afterAll(async () => {
   await db.drop();
 });
 
+// A product as the form saves it. Every detail invented for the test.
+async function createProduct(overrides: Record<string, unknown> = {}): Promise<StoredProduct> {
+  const result = await saveProductWithPlan(
+    db.admin,
+    {
+      kind: "create",
+      fields: {
+        name: "Portrait lens",
+        description: "A used 85 mm portrait lens for Sony E mount, the lens only.",
+        status: "active",
+        categoryId: "3323",
+        conditionIds: ["3000"],
+        searchWords: ["85mm"],
+        mustWords: [["85mm"]],
+        excludeWords: ["adapter"],
+        priceMode: "fixed",
+        maxCents: 52_000,
+        buyerProfile: "company",
+        ...overrides,
+      },
+    },
+    { at: new Date(NOW.getTime() - 48 * HOUR_MS), actor: "system:cli", userId: null, env: SETTINGS_ENV },
+  );
+  if (!result.ok) throw new Error(`save refused: ${JSON.stringify(result)}`);
+  return result.product;
+}
+
 beforeEach(async () => {
   await resetTables(db);
+  await db.admin.query(
+    `TRUNCATE app.product, app.product_source, app.product_revision, app.search, app.search_product, app.setting,
+       app.market_value, app.market_request, app.llm_usage_product_daily CASCADE`,
+  );
+  product = await createProduct();
 });
 
 type Arranged = { listingId: string; candidateId: string; itemId: string; legacyItemId: string; itemKey: string };
 
 type CandidateFields = {
   title?: string;
-  segment?: Segment;
   priceCents?: number;
   shippingCents?: number | null;
   totalGb?: number | null;
-  flags?: ListingFlag[];
+  flags?: string[];
   goneAt?: Date;
+  key?: string;
 };
 
-// A candidate as the poll transaction leaves it: listing, summary content, candidate row.
+// A candidate as the poll transaction leaves it: listing, summary content, candidate row with the
+// product fields it passed (spec 2.8).
 async function arrangeCandidate(admin: DbPool, fields: CandidateFields = {}): Promise<Arranged> {
   const legacyItemId = fakeLegacyItemId();
   const key = itemKey(legacyItemId);
   const itemId = `v1|${legacyItemId}|0`;
-  const segment = fields.segment ?? "gpu_3090";
-  const feedId = segment.startsWith("ram") ? "ram" : segment.startsWith("pc") ? "pc" : "gpu";
+  const productKey = fields.key ?? product.key;
   const priceCents = fields.priceCents ?? 45000;
   const shippingCents = fields.shippingCents === undefined ? 1000 : fields.shippingCents;
   const seenAt = new Date(NOW.getTime() - 60_000);
@@ -63,16 +108,18 @@ async function arrangeCandidate(admin: DbPool, fields: CandidateFields = {}): Pr
     ...key,
     itemId,
     legacyItemId,
-    feedId,
-    segment,
+    feedId: "gpu",
+    segment: "gpu_3090",
     firstSeenAt: seenAt,
     itemCreationAt: new Date(NOW.getTime() - HOUR_MS),
     itemEndAt: new Date(NOW.getTime() + 30 * 24 * HOUR_MS),
     contentExpiresAt: expires,
   });
+  // v2 writes the search id and the product key (spec 10.2 note a).
+  await admin.query("UPDATE ebay_live.listing SET feed_id = 's1', segment = $2 WHERE id = $1", [listingId, productKey]);
   await upsertListingContent(admin, listingId, {
     source: "summary",
-    title: fields.title ?? "RTX 3090 Founders Edition 24GB",
+    title: fields.title ?? TITLE,
     condition: "Gebraucht",
     conditionDescription: null,
     sellerFeedbackScore: 250,
@@ -90,17 +137,23 @@ async function arrangeCandidate(admin: DbPool, fields: CandidateFields = {}): Pr
   const candidateId = await insertCandidate(admin, {
     itemKey: key.itemKey,
     listingId,
-    feedId,
-    segment,
+    feedId: "s1",
+    segment: productKey,
     source: "poll",
     priceCents,
     shippingCents,
     landedCents: shippingCents === null ? null : priceCents + shippingCents,
     shippingKnown: shippingCents !== null,
     totalGb: fields.totalGb ?? null,
-    ruleVersion: 1,
+    ruleVersion: product.version,
     flags: fields.flags ?? [],
     createdAt: seenAt,
+    productVersion: product.version,
+    matchVersion: product.matchVersion,
+    conditionGroup: "used",
+    limitCents: 52_000,
+    priceMode: "fixed",
+    marketValueId: null,
   });
   if (fields.goneAt !== undefined) {
     await admin.query("UPDATE ebay_live.listing SET gone_at = $2, gone_reason = 'ended' WHERE id = $1", [listingId, fields.goneAt]);
@@ -113,17 +166,17 @@ function itemBody(arranged: Arranged, fields: Record<string, unknown> = {}): Rec
   return {
     itemId: arranged.itemId,
     legacyItemId: arranged.legacyItemId,
-    title: "RTX 3090 Founders Edition 24GB",
+    title: TITLE,
     price: { value: "450.00", currency: "EUR" },
     buyingOptions: ["FIXED_PRICE"],
-    categoryId: "27386",
+    categoryId: "3323",
     condition: "Gebraucht",
     conditionId: "3000",
     conditionDescription: "Light signs of use.",
-    description: "<p>Card works fine. Call me on 0171 2345678.</p><script>alert(1)</script>",
+    description: "<p>Lens works fine. Call me on 0171 2345678.</p><script>alert(1)</script>",
     localizedAspects: [
-      { name: "Marke", value: "NVIDIA" },
-      { name: "Speichergröße", value: "24 GB" },
+      { name: "Marke", value: "Sigma" },
+      { name: "Brennweite", value: "85 mm" },
     ],
     shippingOptions: [{ shippingCostType: "FIXED", shippingCost: { value: "12.50", currency: "EUR" } }],
     itemLocation: { country: "DE" },
@@ -154,12 +207,19 @@ function setup(overrides: Partial<EnrichDeps> = {}) {
       callLimit: 40,
       spendLimitMicrousd: 2_000_000,
     },
+    settingsEnv: SETTINGS_ENV,
     alerts: { recipient: RECIPIENT, buyerProfile: "company" },
     log: log.log,
     ...overrides,
   };
   const job = (signal: AbortSignal = new AbortController().signal) => ({ id: "job-1", retryCount: 0, signal });
   return { clock, ebay, reserve, log, claude, deps, enrich: createEnrichHandler(deps), job };
+}
+
+const noScreener = (deps: EnrichDeps): EnrichDeps => ({ ...deps, claude: { ...deps.claude, screener: null } });
+
+async function setSetting(key: string, value: unknown): Promise<void> {
+  await db.admin.query("INSERT INTO app.setting (key, value, updated_at) VALUES ($1, $2, $3)", [key, JSON.stringify(value), NOW]);
 }
 
 async function rows<T>(sql: string, params: unknown[] = []): Promise<T[]> {
@@ -188,7 +248,7 @@ describe("enrich with a Claude slot (section 2.4)", () => {
     ).toEqual([
       {
         source: "item",
-        title: "RTX 3090 Founders Edition 24GB",
+        title: TITLE,
         condition_description: "Light signs of use.",
         seller_feedback_score: 250,
         seller_feedback_pct: 99.5,
@@ -197,10 +257,10 @@ describe("enrich with a Claude slot (section 2.4)", () => {
         returns_days: 30,
         item_location_country: "DE",
         aspects: [
-          { name: "Marke", value: "NVIDIA" },
-          { name: "Speichergröße", value: "24 GB" },
+          { name: "Marke", value: "Sigma" },
+          { name: "Brennweite", value: "85 mm" },
         ],
-        description_text: "Card works fine. Call me on [PHONE].",
+        description_text: "Lens works fine. Call me on [PHONE].",
         image_count: 3,
         fetched_at: NOW,
         content_expires_at: new Date(NOW.getTime() + 6 * HOUR_MS),
@@ -221,6 +281,48 @@ describe("enrich with a Claude slot (section 2.4)", () => {
     expect(log.text()).not.toContain("fake-seller-name");
   });
 
+  it("writes the prompt version, model and effort of the settings now on the candidate at the hand-off (spec 4.5)", async () => {
+    const arranged = await arrangeCandidate(db.admin);
+    await setSetting("claude.model", "claude-haiku-5-5");
+    await setSetting("claude.effort", "low");
+    const { ebay, enrich, job } = setup();
+    ebay.item(arranged.itemId, itemBody(arranged));
+
+    await enrich({ listingId: arranged.listingId }, job());
+
+    expect(await rows("SELECT prompt_version, model, effort, held_reason FROM app.candidate")).toEqual([
+      { prompt_version: PROMPT_VERSION, model: "claude-haiku-5-5", effort: "low", held_reason: null },
+    ]);
+    expect(await jobs(db, "screen")).toEqual([{ listingId: arranged.listingId }]);
+  });
+
+  it("checks the band on the product's limit now and stores the limit the candidate passed (spec 9)", async () => {
+    const arranged = await arrangeCandidate(db.admin);
+    const lower = await arrangeCandidate(db.admin);
+    const { ebay, enrich, job } = setup();
+    ebay.item(arranged.itemId, itemBody(arranged));
+    ebay.item(lower.itemId, itemBody(lower));
+
+    // A price edit after the poll: the candidate passed against EUR 520.
+    await db.admin.query("UPDATE app.product SET max_cents = 60000 WHERE id = $1", [product.id]);
+    await enrich({ listingId: arranged.listingId }, job());
+    await db.admin.query("UPDATE app.product SET max_cents = 40000 WHERE id = $1", [product.id]);
+    await enrich({ listingId: lower.listingId }, job());
+
+    expect(
+      await rows(
+        "SELECT condition_group, limit_cents, price_mode, market_value_id, decision, reject_reason FROM app.candidate WHERE id = $1",
+        [arranged.candidateId],
+      ),
+    ).toEqual([
+      { condition_group: "used", limit_cents: 60000, price_mode: "fixed", market_value_id: null, decision: "pending", reject_reason: null },
+    ]);
+    expect(await rows("SELECT decision, reject_reason FROM app.candidate WHERE id = $1", [lower.candidateId])).toEqual([
+      { decision: "rejected_after_enrich", reject_reason: "above_max" },
+    ]);
+    expect(await jobs(db, "screen")).toEqual([{ listingId: arranged.listingId }]);
+  });
+
   it("keeps shipping unknown with the flag when getItem has no fixed cost to DE either", async () => {
     const arranged = await arrangeCandidate(db.admin, { shippingCents: null, flags: ["shipping_unknown"] });
     const { ebay, enrich, job } = setup();
@@ -237,7 +339,7 @@ describe("enrich with a Claude slot (section 2.4)", () => {
   it("rejects after enrich on the getItem title and condition fields: no screen, no alert", async () => {
     const arranged = await arrangeCandidate(db.admin);
     const { ebay, enrich, job } = setup();
-    ebay.item(arranged.itemId, itemBody(arranged, { conditionDescription: "Defekt, kein Bild." }));
+    ebay.item(arranged.itemId, itemBody(arranged, { conditionDescription: "Defekt, Blende klemmt." }));
 
     await enrich({ listingId: arranged.listingId }, job());
 
@@ -246,20 +348,6 @@ describe("enrich with a Claude slot (section 2.4)", () => {
     ]);
     expect(await jobs(db, "screen")).toEqual([]);
     expect(await rows("SELECT count(*)::int AS n FROM app.alert")).toEqual([{ n: 0 }]);
-  });
-
-  it("checks the model by the candidate's segment, not by a feed id this release does not know", async () => {
-    const arranged = await arrangeCandidate(db.admin);
-    // v2 polls per search and may write a search id where a feed id stood.
-    await db.admin.query("UPDATE ebay_live.listing SET feed_id = 's3' WHERE id = $1", [arranged.listingId]);
-    await db.admin.query("UPDATE app.candidate SET feed_id = 's3' WHERE id = $1", [arranged.candidateId]);
-    const { ebay, enrich, job } = setup();
-    ebay.item(arranged.itemId, itemBody(arranged));
-
-    await enrich({ listingId: arranged.listingId }, job());
-
-    expect(await rows("SELECT decision, reject_reason FROM app.candidate")).toEqual([{ decision: "pending", reject_reason: null }]);
-    expect(await jobs(db, "screen")).toEqual([{ listingId: arranged.listingId }]);
   });
 
   it("marks the listing gone on a getItem 404 and makes no alert", async () => {
@@ -301,12 +389,12 @@ describe("enrich with a Claude slot (section 2.4)", () => {
       { final_verdict: "caution", screened: false, screening_id: null },
     ]);
     const [message] = await rows<{ text_body: string }>("SELECT text_body FROM ebay_live.alert_message");
-    expect(message?.text_body).toContain("Not screened by Claude: details_unavailable");
+    expect(message?.text_body).toContain("Not checked by Claude: details_unavailable");
     expect(message?.text_body).toContain("Returns:       not fetched");
     expect(await jobs(db, "send")).toHaveLength(1);
     expect(await jobs(db, "screen")).toEqual([]);
     expect(log.events("enrich_done")).toEqual([
-      { event: "enrich_done", listing_id: arranged.listingId, decision: "alerted", slot: true, code: "details_unavailable" },
+      { event: "enrich_done", listing_id: arranged.listingId, decision: "alerted", slot: true, outcome_code: "details_unavailable" },
     ]);
   });
 });
@@ -340,12 +428,12 @@ describe("enrich after getItem: price band, code scan, failures (sections 2.4, 3
   it("checks the band on the getItem price: a price that fell below the floor is rejected below_floor", async () => {
     const arranged = await arrangeCandidate(db.admin);
     const { ebay, enrich, job } = setup();
-    ebay.item(arranged.itemId, itemBody(arranged, { price: { value: "200.00", currency: "EUR" } }));
+    ebay.item(arranged.itemId, itemBody(arranged, { price: { value: "150.00", currency: "EUR" } }));
 
     await enrich({ listingId: arranged.listingId }, job());
 
     expect(await rows("SELECT price_cents, landed_cents, decision, reject_reason FROM app.candidate")).toEqual([
-      { price_cents: 20000, landed_cents: 21250, decision: "rejected_after_enrich", reject_reason: "below_floor" },
+      { price_cents: 15000, landed_cents: 16250, decision: "rejected_after_enrich", reject_reason: "below_floor" },
     ]);
     expect(await jobs(db, "screen")).toEqual([]);
   });
@@ -375,16 +463,16 @@ describe("enrich after getItem: price band, code scan, failures (sections 2.4, 3
     const first = await arrangeCandidate(db.admin);
     const second = await arrangeCandidate(db.admin);
     const third = await arrangeCandidate(db.admin);
-    const { ebay, deps, job } = setup();
+    await setSetting("claude.daily_call_limit", 2);
+    const { ebay, enrich, job } = setup();
     for (const arranged of [first, second, third]) ebay.item(arranged.itemId, itemBody(arranged));
-    const enrich = createEnrichHandler({ ...deps, claude: { ...deps.claude, callLimit: 2 } });
 
     for (const arranged of [first, second, third]) await enrich({ listingId: arranged.listingId }, job());
 
     expect(ebay.requests.filter((r) => r.kind === "get_item")).toHaveLength(2);
     expect(await jobs(db, "screen")).toHaveLength(2);
     const [message] = await rows<{ text_body: string }>("SELECT text_body FROM ebay_live.alert_message");
-    expect(message?.text_body).toContain("Not screened by Claude: cap_reached");
+    expect(message?.text_body).toContain("Not checked by Claude: cap_reached");
     expect(await rows("SELECT decision FROM app.candidate WHERE id = $1", [third.candidateId])).toEqual([{ decision: "alerted" }]);
   });
 
@@ -392,13 +480,13 @@ describe("enrich after getItem: price band, code scan, failures (sections 2.4, 3
     const arranged = await arrangeCandidate(db.admin);
     const { ebay, enrich, job, log } = setup();
     // Postgres text cannot hold a NUL character, so the content upsert fails.
-    ebay.item(arranged.itemId, itemBody(arranged, { title: "RTX 3090 Founders\u0000 Edition" }));
+    ebay.item(arranged.itemId, itemBody(arranged, { title: "Sigma 85mm F1.4\u0000 DG DN" }));
 
     await enrich({ listingId: arranged.listingId }, job());
 
     expect(await rows("SELECT final_verdict, screened FROM app.alert")).toEqual([{ final_verdict: "caution", screened: false }]);
     const [message] = await rows<{ text_body: string }>("SELECT text_body FROM ebay_live.alert_message");
-    expect(message?.text_body).toContain("Not screened by Claude: details_unavailable");
+    expect(message?.text_body).toContain("Not checked by Claude: details_unavailable");
     expect(await rows("SELECT decision FROM app.candidate")).toEqual([{ decision: "alerted" }]);
     expect(await jobs(db, "screen")).toEqual([]);
     expect(log.events("enrich_failed")).toEqual([{ event: "enrich_failed", listing_id: arranged.listingId, error_code: "22021" }]);
@@ -416,7 +504,7 @@ describe("enrich after getItem: price band, code scan, failures (sections 2.4, 3
 
     expect(ebay.requests).toEqual([]);
     const [message] = await rows<{ text_body: string }>("SELECT text_body FROM ebay_live.alert_message");
-    expect(message?.text_body).toContain("Not screened by Claude: details_unavailable");
+    expect(message?.text_body).toContain("Not checked by Claude: details_unavailable");
     expect(await rows("SELECT decision FROM app.candidate")).toEqual([{ decision: "alerted" }]);
   });
 
@@ -439,7 +527,7 @@ describe("enrich after getItem: price band, code scan, failures (sections 2.4, 3
     const arranged = await arrangeCandidate(db.admin);
     await db.admin.query("DELETE FROM ebay_live.listing_content WHERE listing_id = $1", [arranged.listingId]);
     const { ebay, deps, job } = setup();
-    const enrich = createEnrichHandler({ ...deps, claude: { ...deps.claude, screener: null } });
+    const enrich = createEnrichHandler(noScreener(deps));
 
     await enrich({ listingId: arranged.listingId }, job());
 
@@ -453,7 +541,7 @@ describe("enrich without a Claude slot (sections 2.4, 5.5, 6.1)", () => {
   it("makes no getItem and alerts from the summary as not_configured when there is no key", async () => {
     const arranged = await arrangeCandidate(db.admin);
     const { ebay, reserve, deps, job } = setup();
-    const enrich = createEnrichHandler({ ...deps, claude: { ...deps.claude, screener: null } });
+    const enrich = createEnrichHandler(noScreener(deps));
 
     await enrich({ listingId: arranged.listingId }, job());
 
@@ -472,7 +560,7 @@ describe("enrich without a Claude slot (sections 2.4, 5.5, 6.1)", () => {
         kind: "band",
         tier: "none",
         seq: 1,
-        segment: "gpu_3090",
+        segment: product.key,
         final_verdict: "caution",
         model_verdict: null,
         blocked_by_code: false,
@@ -481,7 +569,7 @@ describe("enrich without a Claude slot (sections 2.4, 5.5, 6.1)", () => {
         price_cents: 45000,
         shipping_cents: 1000,
         landed_cents: 46000,
-        rule_version: 1,
+        rule_version: product.version,
         buyer_profile: "company",
         created_at: NOW,
       },
@@ -491,7 +579,7 @@ describe("enrich without a Claude slot (sections 2.4, 5.5, 6.1)", () => {
   it("gives the not-screened alert one pending delivery for ALERT_TO", async () => {
     const arranged = await arrangeCandidate(db.admin);
     const { deps, job } = setup();
-    const enrich = createEnrichHandler({ ...deps, claude: { ...deps.claude, screener: null } });
+    const enrich = createEnrichHandler(noScreener(deps));
 
     await enrich({ listingId: arranged.listingId }, job());
 
@@ -504,7 +592,7 @@ describe("enrich without a Claude slot (sections 2.4, 5.5, 6.1)", () => {
   it("stores the rendered not-screened email for the delivery, expiring with the summary content", async () => {
     const arranged = await arrangeCandidate(db.admin);
     const { deps, job } = setup();
-    const enrich = createEnrichHandler({ ...deps, claude: { ...deps.claude, screener: null } });
+    const enrich = createEnrichHandler(noScreener(deps));
 
     await enrich({ listingId: arranged.listingId }, job());
 
@@ -515,20 +603,91 @@ describe("enrich without a Claude slot (sections 2.4, 5.5, 6.1)", () => {
     expect(messages).toHaveLength(1);
     const message = messages[0];
     expect(message?.delivery_id).toBe(delivery?.id);
-    expect(message?.subject).toBe("[Deal] RTX 3090: EUR 460 incl. shipping (88% of max) - NOT SCREENED");
-    expect(message?.text_body).toContain("Not screened by Claude: not_configured");
+    expect(message?.subject).toBe("[Deal] Portrait lens: EUR 460 incl. shipping (88 % of limit) - NOT CHECKED BY CLAUDE");
+    expect(message?.text_body).toContain("Product:       Portrait lens\n");
+    expect(message?.text_body).toContain("Limit:         EUR 520.00\n");
+    expect(message?.text_body).toContain("Not checked by Claude: not_configured");
     expect(message?.text_body).toContain("Returns:       not fetched");
     expect(message?.text_body).toContain(`https://www.ebay.de/itm/${arranged.legacyItemId}`);
     expect(message?.text_body).toContain(`Delivery ${delivery?.id}`);
-    expect(message?.html_body).toContain("RTX 3090 Founders Edition 24GB");
+    expect(message?.html_body).toContain(TITLE);
     // 6 h after the summary was fetched.
     expect(message?.expires_at).toEqual(new Date(NOW.getTime() - 60_000 + 6 * HOUR_MS));
+  });
+
+  it("shows the market limit in the email and how far below the typical asking price the deal is (spec 6.4)", async () => {
+    await db.admin.query("UPDATE app.product SET price_mode = 'below_market', below_market_pct = 15, max_cents = 60000 WHERE id = $1", [
+      product.id,
+    ]);
+    await db.admin.query(
+      `INSERT INTO app.market_value (product_id, condition_group, match_version, computed_at, method_version, status, capped,
+                                     n, neff, m_cents, value_cents)
+       VALUES ($1, 'used', $2, $3, 'mv-1', 'ok', false, 20, 12, 56100, 56100)`,
+      [product.id, product.matchVersion, new Date(NOW.getTime() - 3 * HOUR_MS)],
+    );
+    const arranged = await arrangeCandidate(db.admin);
+    const { deps, job } = setup();
+    const enrich = createEnrichHandler(noScreener(deps));
+
+    await enrich({ listingId: arranged.listingId }, job());
+
+    const [message] = await rows<{ subject: string; text_body: string }>("SELECT subject, text_body FROM ebay_live.alert_message");
+    expect(message?.subject).toBe(
+      "[Deal] Portrait lens: EUR 460 incl. shipping (18 % below the typical asking price) - NOT CHECKED BY CLAUDE",
+    );
+    // 15 % below EUR 561, rounded down to EUR 10.
+    expect(message?.text_body).toContain(
+      ["Limit:         EUR 470.00", "               18 % below the typical asking price of EUR 561.00"].join("\n"),
+    );
+  });
+
+  it("uses a value computed after the first sighting when none came before it, as the poll did, not the cap (spec 6.4)", async () => {
+    await db.admin.query("UPDATE app.product SET price_mode = 'below_market', below_market_pct = 15, max_cents = 60000 WHERE id = $1", [
+      product.id,
+    ]);
+    // The first sighting is 60 s before NOW; this value of the current match version came 30 s later.
+    await db.admin.query(
+      `INSERT INTO app.market_value (product_id, condition_group, match_version, computed_at, method_version, status, capped,
+                                     n, neff, m_cents, value_cents)
+       VALUES ($1, 'used', $2, $3, 'mv-1', 'ok', false, 20, 12, 56100, 56100)`,
+      [product.id, product.matchVersion, new Date(NOW.getTime() - 30_000)],
+    );
+    const arranged = await arrangeCandidate(db.admin);
+    const { deps, job } = setup();
+    const enrich = createEnrichHandler(noScreener(deps));
+
+    await enrich({ listingId: arranged.listingId }, job());
+
+    const [message] = await rows<{ text_body: string }>("SELECT text_body FROM ebay_live.alert_message");
+    expect(message?.text_body).toContain("Limit:         EUR 470.00");
+  });
+
+  it("says using your cap in the email when a market-mode product has no reliable value (owner decision 7)", async () => {
+    await db.admin.query("UPDATE app.product SET price_mode = 'below_market', below_market_pct = 15, max_cents = 60000 WHERE id = $1", [
+      product.id,
+    ]);
+    // A value 7 days and 1 minute before the first sighting is too old to use.
+    await db.admin.query(
+      `INSERT INTO app.market_value (product_id, condition_group, match_version, computed_at, method_version, status, capped,
+                                     n, neff, m_cents, value_cents)
+       VALUES ($1, 'used', $2, $3, 'mv-1', 'ok', false, 20, 12, 56100, 56100)`,
+      [product.id, product.matchVersion, new Date(NOW.getTime() - 60_000 - 7 * 24 * HOUR_MS - 60_000)],
+    );
+    const arranged = await arrangeCandidate(db.admin);
+    const { deps, job } = setup();
+    const enrich = createEnrichHandler(noScreener(deps));
+
+    await enrich({ listingId: arranged.listingId }, job());
+
+    const [message] = await rows<{ subject: string; text_body: string }>("SELECT subject, text_body FROM ebay_live.alert_message");
+    expect(message?.subject).toBe("[Deal] Portrait lens: EUR 460 incl. shipping (using your cap) - NOT CHECKED BY CLAUDE");
+    expect(message?.text_body).toContain(["Limit:         EUR 600.00, using your cap", "               77 % of your limit"].join("\n"));
   });
 
   it("queues the send job for the delivery in the alert transaction", async () => {
     const arranged = await arrangeCandidate(db.admin);
     const { deps, job } = setup();
-    const enrich = createEnrichHandler({ ...deps, claude: { ...deps.claude, screener: null } });
+    const enrich = createEnrichHandler(noScreener(deps));
 
     await enrich({ listingId: arranged.listingId }, job());
 
@@ -539,7 +698,7 @@ describe("enrich without a Claude slot (sections 2.4, 5.5, 6.1)", () => {
   it("marks the candidate alerted without starting enrich", async () => {
     const arranged = await arrangeCandidate(db.admin);
     const { deps, job } = setup();
-    const enrich = createEnrichHandler({ ...deps, claude: { ...deps.claude, screener: null } });
+    const enrich = createEnrichHandler(noScreener(deps));
 
     await enrich({ listingId: arranged.listingId }, job());
 
@@ -549,7 +708,7 @@ describe("enrich without a Claude slot (sections 2.4, 5.5, 6.1)", () => {
   it("logs alert_created and enrich_done with the not-screened code", async () => {
     const arranged = await arrangeCandidate(db.admin);
     const { deps, job, log } = setup();
-    const enrich = createEnrichHandler({ ...deps, claude: { ...deps.claude, screener: null } });
+    const enrich = createEnrichHandler(noScreener(deps));
 
     await enrich({ listingId: arranged.listingId }, job());
 
@@ -558,28 +717,28 @@ describe("enrich without a Claude slot (sections 2.4, 5.5, 6.1)", () => {
       { event: "alert_created", alert_id: alert?.id, final_verdict: "caution", blocked_by_code: false },
     ]);
     expect(log.events("enrich_done")).toEqual([
-      { event: "enrich_done", listing_id: arranged.listingId, decision: "alerted", slot: false, code: "not_configured" },
+      { event: "enrich_done", listing_id: arranged.listingId, decision: "alerted", slot: false, outcome_code: "not_configured" },
     ]);
   });
 
   it("makes no getItem and names cap_reached when the daily call cap is 0", async () => {
     const arranged = await arrangeCandidate(db.admin);
-    const { ebay, deps, job } = setup();
-    const enrich = createEnrichHandler({ ...deps, claude: { ...deps.claude, callLimit: 0 } });
+    await setSetting("claude.daily_call_limit", 0);
+    const { ebay, enrich, job } = setup();
 
     await enrich({ listingId: arranged.listingId }, job());
 
     expect(ebay.requests).toEqual([]);
     const [message] = await rows<{ text_body: string }>("SELECT text_body FROM ebay_live.alert_message");
-    expect(message?.text_body).toContain("Not screened by Claude: cap_reached");
+    expect(message?.text_body).toContain("Not checked by Claude: cap_reached");
   });
 
-  it("makes no getItem and names spend_cap_reached when one more worst-case call would pass the spend cap", async () => {
+  it("makes no getItem and names product_share_reached when the product used half of the day's calls (spec 4.4)", async () => {
+    await createProduct({ name: "Tripod", searchWords: ["stativ"], mustWords: [["stativ"]], categoryId: "30090" });
     const arranged = await arrangeCandidate(db.admin);
-    // Spent and reserved leave less than one worst-case call under USD 2.
     await db.admin.query(
-      "INSERT INTO app.llm_usage_daily (day_berlin, calls, reserved_microusd, spent_microusd) VALUES ('2026-10-21', 3, $1, $2)",
-      [WORST_CASE_COST_MICROUSD, 2_000_000 - 2 * WORST_CASE_COST_MICROUSD + 1],
+      "INSERT INTO app.llm_usage_product_daily (day_berlin, product_key, calls) VALUES ($1::date, $2, 20)",
+      [berlinDay(NOW), product.key],
     );
     const { ebay, enrich, job } = setup();
 
@@ -587,7 +746,24 @@ describe("enrich without a Claude slot (sections 2.4, 5.5, 6.1)", () => {
 
     expect(ebay.requests).toEqual([]);
     const [message] = await rows<{ text_body: string }>("SELECT text_body FROM ebay_live.alert_message");
-    expect(message?.text_body).toContain("Not screened by Claude: spend_cap_reached");
+    expect(message?.text_body).toContain("Not checked by Claude: product_share_reached");
+  });
+
+  it("makes no getItem and names spend_cap_reached when one more worst-case call would pass the spend cap", async () => {
+    const arranged = await arrangeCandidate(db.admin);
+    const worst = worstCaseCostMicrousd(MODEL);
+    // Spent and reserved leave less than one worst-case call under USD 2.
+    await db.admin.query(
+      "INSERT INTO app.llm_usage_daily (day_berlin, calls, reserved_microusd, spent_microusd) VALUES ('2026-10-21', 3, $1, $2)",
+      [worst, 2_000_000 - 2 * worst + 1],
+    );
+    const { ebay, enrich, job } = setup();
+
+    await enrich({ listingId: arranged.listingId }, job());
+
+    expect(ebay.requests).toEqual([]);
+    const [message] = await rows<{ text_body: string }>("SELECT text_body FROM ebay_live.alert_message");
+    expect(message?.text_body).toContain("Not checked by Claude: spend_cap_reached");
   });
 
   it("makes no getItem and names paused while screening is paused after auth_failed", async () => {
@@ -599,13 +775,36 @@ describe("enrich without a Claude slot (sections 2.4, 5.5, 6.1)", () => {
 
     expect(ebay.requests).toEqual([]);
     const [message] = await rows<{ text_body: string }>("SELECT text_body FROM ebay_live.alert_message");
-    expect(message?.text_body).toContain("Not screened by Claude: paused");
+    expect(message?.text_body).toContain("Not checked by Claude: paused");
+  });
+
+  it("holds the candidate instead of alerting when the product requires the Claude check (spec 4.3)", async () => {
+    await db.admin.query("UPDATE app.product SET claude_required = true WHERE id = $1", [product.id]);
+    const arranged = await arrangeCandidate(db.admin);
+    await setSetting("claude.daily_call_limit", 0);
+    const { ebay, enrich, job, log } = setup();
+
+    await enrich({ listingId: arranged.listingId }, job());
+
+    expect(ebay.requests).toEqual([]);
+    expect(await rows("SELECT decision, held_reason, reject_reason FROM app.candidate")).toEqual([
+      { decision: "held", held_reason: "cap_reached", reject_reason: null },
+    ]);
+    expect(await rows("SELECT count(*)::int AS n FROM app.alert")).toEqual([{ n: 0 }]);
+    expect(await rows("SELECT count(*)::int AS n FROM app.alert_delivery")).toEqual([{ n: 0 }]);
+    expect(await jobs(db, "send")).toEqual([]);
+    expect(log.events("candidate_held")).toEqual([
+      { event: "candidate_held", candidate_id: arranged.candidateId, held_reason: "cap_reached" },
+    ]);
+    expect(log.events("enrich_done")).toEqual([
+      { event: "enrich_done", listing_id: arranged.listingId, decision: "held", slot: false, outcome_code: "cap_reached" },
+    ]);
   });
 
   it("makes no delivery when a code scam floor fires on the summary title, and marks the candidate blocked", async () => {
-    const arranged = await arrangeCandidate(db.admin, { title: "RTX 3090 24GB nur PayPal Freunde" });
+    const arranged = await arrangeCandidate(db.admin, { title: "Sigma 85mm F1.4 nur PayPal Freunde" });
     const { deps, job } = setup();
-    const enrich = createEnrichHandler({ ...deps, claude: { ...deps.claude, screener: null } });
+    const enrich = createEnrichHandler(noScreener(deps));
 
     await enrich({ listingId: arranged.listingId }, job());
 
@@ -617,21 +816,21 @@ describe("enrich without a Claude slot (sections 2.4, 5.5, 6.1)", () => {
   });
 
   it("logs enrich_done as blocked when the code scam floor kept the email back", async () => {
-    const arranged = await arrangeCandidate(db.admin, { title: "RTX 3090 24GB nur PayPal Freunde" });
+    const arranged = await arrangeCandidate(db.admin, { title: "Sigma 85mm F1.4 nur PayPal Freunde" });
     const { deps, job, log } = setup();
-    const enrich = createEnrichHandler({ ...deps, claude: { ...deps.claude, screener: null } });
+    const enrich = createEnrichHandler(noScreener(deps));
 
     await enrich({ listingId: arranged.listingId }, job());
 
     expect(log.events("enrich_done")).toEqual([
-      { event: "enrich_done", listing_id: arranged.listingId, decision: "blocked", slot: false, code: "not_configured" },
+      { event: "enrich_done", listing_id: arranged.listingId, decision: "blocked", slot: false, outcome_code: "not_configured" },
     ]);
   });
 
   it("makes one alert, one delivery and one send job when two jobs both saw the candidate pending", async () => {
     const arranged = await arrangeCandidate(db.admin);
     const { deps, job, log } = setup();
-    const enrich = createEnrichHandler({ ...deps, claude: { ...deps.claude, screener: null } });
+    const enrich = createEnrichHandler(noScreener(deps));
 
     await enrich({ listingId: arranged.listingId }, job());
     // The second job read the candidate before the first one committed.
@@ -676,10 +875,39 @@ describe("enrich no-ops (section 2.4)", () => {
     expect(await rows("SELECT count(*)::int AS n FROM app.alert")).toEqual([{ n: 0 }]);
   });
 
-  it("expires a candidate whose segment key this release does not know, without a throw or a getItem, so relay stops", async () => {
+  it("ends the candidate expired when its product was paused or archived after the poll, without a getItem (spec 9)", async () => {
+    const paused = await arrangeCandidate(db.admin);
+    const archived = await arrangeCandidate(db.admin);
+    const { ebay, enrich, job } = setup();
+
+    await db.admin.query("UPDATE app.product SET status = 'paused' WHERE id = $1", [product.id]);
+    await enrich({ listingId: paused.listingId }, job());
+    await db.admin.query("UPDATE app.product SET status = 'archived' WHERE id = $1", [product.id]);
+    await enrich({ listingId: archived.listingId }, job());
+
+    expect(ebay.requests).toEqual([]);
+    expect(await rows("SELECT id, decision, reject_reason FROM app.candidate ORDER BY reject_reason")).toEqual([
+      { id: archived.candidateId, decision: "expired", reject_reason: "product_archived" },
+      { id: paused.candidateId, decision: "expired", reject_reason: "product_paused" },
+    ]);
+    expect(await rows("SELECT count(*)::int AS n FROM app.alert")).toEqual([{ n: 0 }]);
+  });
+
+  it("ends a candidate of a draft product expired, as when Release 0 candidates meet the imported drafts (spec 11.5)", async () => {
     const arranged = await arrangeCandidate(db.admin);
-    // A product key as v2 writes it.
-    await db.admin.query("UPDATE app.candidate SET segment = 'p_k3x9ab2cde' WHERE id = $1", [arranged.candidateId]);
+    const { ebay, enrich, job } = setup();
+
+    await db.admin.query("UPDATE app.product SET status = 'draft' WHERE id = $1", [product.id]);
+    await enrich({ listingId: arranged.listingId }, job());
+
+    expect(ebay.requests).toEqual([]);
+    expect(await rows("SELECT decision, reject_reason FROM app.candidate")).toEqual([{ decision: "expired", reject_reason: "product_paused" }]);
+    expect(await rows("SELECT count(*)::int AS n FROM app.alert")).toEqual([{ n: 0 }]);
+  });
+
+  it("expires a candidate whose segment key this release does not know, without a throw or a getItem, so relay stops", async () => {
+    // A key that names no product.
+    const arranged = await arrangeCandidate(db.admin, { key: "p_k3x9ab2cde" });
     const { ebay, enrich, job, log } = setup();
 
     await enrich({ listingId: arranged.listingId }, job());

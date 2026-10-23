@@ -1,7 +1,16 @@
 {
   "id": "06-rtx3090-untested-estate",
   "group": "legitimate",
-  "segment": "gpu_3090",
+  "set": "mvp",
+  "product_kind": "hardware",
+  "product": {
+    "name": "RTX 3090",
+    "description": "A used NVIDIA GeForce RTX 3090 graphics card with 24 GB: the working card itself. Not the RTX 3090 Ti.",
+    "must_contain": [["3090"]],
+    "must_not_contain": ["3090 ti", "defekt"],
+    "conditions": ["used"],
+    "limit_eur": 520
+  },
   "listing": {
     "title": "RTX 3090 24GB Grafikkarte aus Nachlass",
     "condition": "Gebraucht",

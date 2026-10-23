@@ -92,6 +92,31 @@ describe("createSmtpMailer", () => {
     ]);
   });
 
+  it("sends the product's people in Bcc, so no recipient sees another's address, and leaves To as it is", async () => {
+    const transport = fakeTransport();
+    const sent: SendMailOptions[] = [];
+    transport.sendMail = (options) => {
+      sent.push(options);
+      return Promise.resolve({ messageId: "<m2@example.test>", response: "250 2.0.0 OK" });
+    };
+    await mailerWith(transport).send({ ...email, bcc: ["anna@example.test", "ben@example.test"] });
+    expect(sent).toEqual([
+      expect.objectContaining({ to: "owner@example.test", bcc: ["anna@example.test", "ben@example.test"] }),
+    ]);
+    expect(JSON.stringify(sent[0]?.headers)).not.toContain("anna@example.test");
+  });
+
+  it("sets no Bcc field when the product has no one but ALERT_TO", async () => {
+    const transport = fakeTransport();
+    const sent: SendMailOptions[] = [];
+    transport.sendMail = (options) => {
+      sent.push(options);
+      return Promise.resolve({ messageId: "<m3@example.test>", response: "250 2.0.0 OK" });
+    };
+    await mailerWith(transport).send({ ...email, bcc: [] });
+    expect(sent[0]).not.toHaveProperty("bcc");
+  });
+
   it("maps a 421 reply to a transient SmtpError", async () => {
     const transport = fakeTransport();
     transport.sendMail = () =>

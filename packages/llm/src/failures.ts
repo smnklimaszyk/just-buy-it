@@ -1,4 +1,4 @@
-import { costMicroUsd, type TokenUsage } from "./cost.js";
+import type { TokenUsage } from "./cost.js";
 
 // Section 5.5. The adapter raises the first nine; the screen job sets the others.
 export const SCREENING_FAILURE_CODES = [
@@ -53,8 +53,9 @@ export type ClaudeErrorFields = {
   code: AdapterFailureCode;
   status: number | null;
   retryAfterSeconds?: number | null | undefined;
-  // Present when Anthropic reported usage: the call was billed even though it failed.
-  usage?: TokenUsage | null | undefined;
+  // Present when Anthropic reported usage: the call was billed even though it failed. The adapter
+  // prices it at the requested model's rates.
+  billed?: { usage: TokenUsage; costMicroUsd: number } | null | undefined;
 };
 
 // Carries the failure code, HTTP status, retry-after and usage only. The message is fixed, and
@@ -76,8 +77,8 @@ export class ClaudeError extends Error {
     this.status = fields.status;
     this.retryAfterSeconds = fields.retryAfterSeconds ?? null;
     this.retryable = isRetryable(fields.code);
-    this.usage = fields.usage ?? null;
+    this.usage = fields.billed?.usage ?? null;
     // Without usage the screen job settles the worst case: the request may have been billed.
-    this.costMicroUsd = this.usage === null ? null : costMicroUsd(this.usage);
+    this.costMicroUsd = fields.billed?.costMicroUsd ?? null;
   }
 }

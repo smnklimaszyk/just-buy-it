@@ -2,11 +2,13 @@
 // pg-boss is imported only below packages/db/src/queue.
 export {
   checkDashboardRole,
+  checkWebRole,
   checkWorkerRole,
   RoleCheckError,
   setRolePassword,
   type ServiceRole,
 } from "../app-role.js";
+export { bootstrapAdmins } from "../bootstrap-admins.js";
 export { migrateQueue, QueueSchemaVersionError, type QueueMigrateResult } from "./migrate-queue.js";
 export {
   deadLetterName,

@@ -1,7 +1,17 @@
 {
   "id": "13-ddr5-sodimm",
   "group": "scam",
-  "segment": "ram_ddr5",
+  "set": "mvp",
+  "product_kind": "hardware",
+  "product": {
+    "name": "DDR5 desktop RAM",
+    "description": "Used DDR5 desktop memory modules (DIMM, non-ECC), at least 32 GB in total. Not SO-DIMM laptop memory.",
+    "must_contain": [["ddr5"]],
+    "must_not_contain": ["sodimm", "so dimm", "laptop"],
+    "conditions": ["used"],
+    "min_total_gb": 32,
+    "limit_eur": 179.2
+  },
   "listing": {
     "title": "32GB DDR5 4800 Kit 2x16GB Kingston",
     "condition": "Gebraucht",

@@ -20,7 +20,7 @@
 ### Planned for phase B (not part of this decision)
 
 Recorded so phase B starts from it; each point is settled in phase B's own pull requests, not by this record.
-- `listing.source` (`ebay` | `kleinanzeigen`) and item key `ka:<adId>`; one-row `ka_mailbox_state(uid_validity text, last_uid bigint, updated_at)`, written in the same transaction as the parsed listings.
+- `listing.source` (`ebay` | `kleinanzeigen`) and item key `ka:<adId>`. Since ADR 0037 (Sources) this is `candidate.listing_source` (`ebay` | `kleinanzeigen`), because `candidate.source` already holds `poll` | `sweep`; `app.product_source` maps the saved-search ids to products; one-row `ka_mailbox_state(uid_validity text, last_uid bigint, updated_at)`, written in the same transaction as the parsed listings.
 - Raw emails are not stored. Parsed fields get ADR 0014 class rules decided then; private sellers' titles are treated like class 1 (6 hours).
 - Worker job `ka-poll` every few minutes calls `fetchNew`. The sector `classify` runs on the title only (no aspects).
 - Env names, read only in `apps/worker/src/env.ts`: `KA_IMAP_HOST`, `KA_IMAP_PORT`, `KA_IMAP_USER`, `KA_IMAP_PASSWORD` (secret), `KA_TRUSTED_AUTHSERV_ID` (default `mail.intra-ai.de`). None gets a committed default for host, user or password. `KA_IMAP_USER` is also passed to the parser as the expected recipient.

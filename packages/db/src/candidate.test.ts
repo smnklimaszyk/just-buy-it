@@ -57,12 +57,53 @@ describe("insertCandidate, getCandidateByListingId and countCandidatesSince", ()
       rejectReason: null,
       enrichStartedAt: null,
       codeSignals: [],
+      // A row written the Release 0 way has none of the v2 columns.
+      productVersion: null,
+      matchVersion: null,
+      conditionGroup: null,
+      limitCents: null,
+      priceMode: null,
+      marketValueId: null,
+      promptVersion: null,
+      model: null,
+      effort: null,
+      heldReason: null,
     });
     expect(await getCandidateByListingId(database.pool, listingId(9))).toBeNull();
     expect(await countCandidatesSince(database.pool, "gpu_3090", at(0))).toBe(2);
     expect(await countCandidatesSince(database.pool, "gpu_3090", at(1))).toBe(1);
     await expect(insertCandidate(database.pool, { ...candidateInput(1, at(90)), listingId: listingId(8) })).rejects.toMatchObject({
       code: "23505",
+    });
+  });
+
+  it("stores the product's version, match version, condition group, limit, price mode and market value of a v2 candidate", async () => {
+    const marketValueId = "00000000-0000-7000-8000-00000000abcd";
+    await insertCandidate(database.pool, {
+      ...candidateInput(30, at(0)),
+      feedId: "s12",
+      segment: "p_k3x9ab2cde",
+      productVersion: 4,
+      matchVersion: 2,
+      conditionGroup: "used",
+      limitCents: 52000,
+      priceMode: "below_market",
+      marketValueId,
+    });
+
+    expect(await getCandidateByListingId(database.pool, listingId(30))).toMatchObject({
+      feedId: "s12",
+      segment: "p_k3x9ab2cde",
+      productVersion: 4,
+      matchVersion: 2,
+      conditionGroup: "used",
+      limitCents: 52000,
+      priceMode: "below_market",
+      marketValueId,
+      promptVersion: null,
+      model: null,
+      effort: null,
+      heldReason: null,
     });
   });
 });
@@ -99,6 +140,17 @@ describe("enrich writes", () => {
       decision: "rejected_after_enrich",
       rejectReason: "defective",
     });
+  });
+
+  it("ends a pending candidate of a paused or archived product as expired with the reason (spec 9)", async () => {
+    const paused = await insertCandidate(database.pool, candidateInput(40, at(0)));
+    const archived = await insertCandidate(database.pool, candidateInput(41, at(0)));
+
+    expect(await setCandidateDecision(database.pool, paused, { decision: "expired", rejectReason: "product_paused" })).toBe(true);
+    expect(await setCandidateDecision(database.pool, archived, { decision: "expired", rejectReason: "product_archived" })).toBe(true);
+
+    expect(await getCandidateByListingId(database.pool, listingId(40))).toMatchObject({ decision: "expired", rejectReason: "product_paused" });
+    expect(await getCandidateByListingId(database.pool, listingId(41))).toMatchObject({ decision: "expired", rejectReason: "product_archived" });
   });
 });
 

@@ -1,0 +1,40 @@
+{
+  "id": "21-phone-iphone-13",
+  "set": "v2",
+  "group": "legitimate",
+  "product_kind": "other",
+  "product": {
+    "name": "Apple iPhone 13, 128 GB",
+    "description": "A used Apple iPhone 13 (not the mini, not the Pro) with 128 GB, unlocked, without an iCloud lock and working.",
+    "must_contain": [["iphone 13"], ["128gb", "128 gb"]],
+    "must_not_contain": ["mini", "pro", "defekt", "icloud gesperrt"],
+    "conditions": ["used"],
+    "limit_eur": 380
+  },
+  "listing": {
+    "title": "Apple iPhone 13 128GB Blau ohne Simlock Akku 87%",
+    "condition": "Gebraucht",
+    "condition_description": "Display ohne Kratzer, kleine Macke am Rahmen.",
+    "price_eur": 339,
+    "shipping_eur": 6.99,
+    "landed_eur": 345.99,
+    "owner_max_eur": 380,
+    "percent_of_max": 91,
+    "seller": { "feedback_score": 96, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 4,
+    "item_specifics": [
+      { "name": "Marke", "value": "Apple" },
+      { "name": "Modell", "value": "Apple iPhone 13" },
+      { "name": "Speicherkapazität", "value": "128 GB" },
+      { "name": "Netz", "value": "Ohne Simlock" },
+      { "name": "Farbe", "value": "Blau" }
+    ],
+    "image_count": 7,
+    "description": "Mein iPhone 13 mit 128 GB in Blau. Immer mit Hülle und Panzerglas genutzt, das Display hat keine Kratzer. Am Rahmen unten links eine kleine Macke, siehe Bilder. Akkukapazität 87 %. Das Gerät ist auf Werkseinstellungen zurückgesetzt und aus meinem iCloud-Konto abgemeldet. Dabei sind der Originalkarton und das Ladekabel. Versand versichert.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["pass"], "product_match_in": ["match"] }
+}

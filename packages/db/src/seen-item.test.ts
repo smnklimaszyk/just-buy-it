@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
-import { claimCandidate, feedHasSeenItems, getSeenItems, upsertSeenItems } from "./seen-item.js";
+import { claimCandidate, getSeenItems, upsertSeenItems } from "./seen-item.js";
 import { createTestDatabase, type TestDatabase } from "./testing/database.js";
 
 let database: TestDatabase;
@@ -37,11 +37,11 @@ describe("upsertSeenItems and getSeenItems", () => {
   });
 });
 
-describe("claimCandidate and feedHasSeenItems", () => {
-  it("claims an item once, even from two sessions at the same time, and tells whether a feed has a baseline", async () => {
-    expect(await feedHasSeenItems(database.pool, "ram")).toBe(false);
+describe("claimCandidate", () => {
+  it("claims an item once, even from two sessions at the same time", async () => {
+    // v2: the search id in feed_id, the product key in segment.
     await upsertSeenItems(database.pool, [
-      { itemKey: key(10), keyVersion: 1, feedId: "ram", segment: "ram_ddr4", outcome: "above_max", seenAt: at(0) },
+      { itemKey: key(10), keyVersion: 1, feedId: "s3", segment: "p_k3x9ab2cde", outcome: "above_max", seenAt: at(0) },
     ]);
 
     const claims = await Promise.all([
@@ -54,7 +54,10 @@ describe("claimCandidate and feedHasSeenItems", () => {
     expect(claims.filter(Boolean)).toHaveLength(1);
     expect(later).toBe(false);
     expect(unknown).toBe(false);
-    expect((await getSeenItems(database.pool, [key(10)])).get(key(10))).toMatchObject({ outcome: "candidate" });
-    expect(await feedHasSeenItems(database.pool, "ram")).toBe(true);
+    expect((await getSeenItems(database.pool, [key(10)])).get(key(10))).toMatchObject({
+      feedId: "s3",
+      segment: "p_k3x9ab2cde",
+      outcome: "candidate",
+    });
   });
 });

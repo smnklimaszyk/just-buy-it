@@ -3,7 +3,7 @@
 // exactly the tables marked purgedByWorker.
 
 export type RetentionRule = {
-  schema: "app" | "ebay_live";
+  schema: "app" | "ebay_live" | "auth";
   table: string;
   // ADR 0014: 1 eBay content and raw IDs, 2 derived listing data, 3 operations and config.
   class: 1 | 2 | 3;
@@ -17,8 +17,9 @@ export type RetentionRule = {
   priceNullAfterDays: number | null;
   // Numeric columns that carry no listing price (counts, config, sizes).
   otherNumericColumns: readonly string[];
-  // Who writes the rows: the worker, the ops CLI, the server, or both processes (quota tables).
-  owner: "worker" | "ops" | "server" | "shared";
+  // Who writes the rows: the worker, the ops CLI, the server, web (the admin UI and the sign-in),
+  // or both processes (quota tables).
+  owner: "worker" | "ops" | "server" | "web" | "shared";
   purgedByWorker: boolean;
 };
 
@@ -86,6 +87,18 @@ export const RETENTION: readonly RetentionRule[] = [
     owner: "worker",
     purgedByWorker: true,
   },
+  {
+    schema: "ebay_live",
+    table: "market_preview",
+    class: 1,
+    lifetime: "6 h",
+    purgeKey: "seen_at",
+    priceColumns: ["landed_cents"],
+    priceNullAfterDays: null,
+    otherNumericColumns: [],
+    owner: "worker",
+    purgedByWorker: true,
+  },
   // app, worker tables
   {
     schema: "app",
@@ -131,7 +144,7 @@ export const RETENTION: readonly RetentionRule[] = [
     purgeKey: "created_at",
     priceColumns: PRICES,
     priceNullAfterDays: 30,
-    otherNumericColumns: ["total_gb", "rule_version"],
+    otherNumericColumns: ["total_gb", "rule_version", "product_version", "match_version", "limit_cents"],
     owner: "worker",
     purgedByWorker: true,
   },
@@ -237,6 +250,176 @@ export const RETENTION: readonly RetentionRule[] = [
     priceNullAfterDays: null,
     otherNumericColumns: ["id"],
     owner: "worker",
+    purgedByWorker: false,
+  },
+  // app, market value (spec 2.4)
+  {
+    schema: "app",
+    table: "market_listing",
+    class: 2,
+    lifetime: "30 d after the last sighting",
+    purgeKey: "last_seen_at",
+    priceColumns: ["landed_cents"],
+    priceNullAfterDays: null,
+    otherNumericColumns: ["match_version", "unit_total"],
+    owner: "worker",
+    purgedByWorker: true,
+  },
+  {
+    schema: "app",
+    table: "market_value",
+    class: 2,
+    lifetime: "1 y, prices NULL at 30 d",
+    purgeKey: "computed_at",
+    priceColumns: ["m_cents", "p25_cents", "p75_cents", "lo_cents", "hi_cents", "value_cents"],
+    priceNullAfterDays: 30,
+    otherNumericColumns: ["match_version", "n", "neff", "half_width", "best_offer_share"],
+    owner: "worker",
+    purgedByWorker: true,
+  },
+  // web inserts the request; the worker works it to done or refused and purges it.
+  {
+    schema: "app",
+    table: "market_request",
+    class: 3,
+    lifetime: "7 d",
+    purgeKey: "requested_at",
+    priceColumns: [],
+    priceNullAfterDays: null,
+    otherNumericColumns: [],
+    owner: "worker",
+    purgedByWorker: true,
+  },
+  {
+    schema: "app",
+    table: "category_request",
+    class: 3,
+    lifetime: "7 d",
+    purgeKey: "created_at",
+    priceColumns: [],
+    priceNullAfterDays: null,
+    otherNumericColumns: [],
+    owner: "worker",
+    purgedByWorker: true,
+  },
+  {
+    schema: "app",
+    table: "market_daily",
+    class: 3,
+    lifetime: "one row per Berlin day, kept",
+    purgeKey: null,
+    priceColumns: [],
+    priceNullAfterDays: null,
+    otherNumericColumns: ["extra_snapshots"],
+    owner: "worker",
+    purgedByWorker: false,
+  },
+  {
+    schema: "app",
+    table: "market_run",
+    class: 3,
+    lifetime: "30 d",
+    purgeKey: "started_at",
+    priceColumns: [],
+    priceNullAfterDays: null,
+    otherNumericColumns: ["calls", "pages", "total"],
+    owner: "worker",
+    purgedByWorker: true,
+  },
+  {
+    schema: "app",
+    table: "llm_usage_product_daily",
+    class: 3,
+    lifetime: "30 d",
+    purgeKey: "day_berlin",
+    priceColumns: [],
+    priceNullAfterDays: null,
+    otherNumericColumns: ["calls"],
+    owner: "worker",
+    purgedByWorker: true,
+  },
+  // app, products as data (spec 2.1 to 2.5). Written by web and the ops CLI, never deleted.
+  {
+    schema: "app",
+    table: "product",
+    class: 3,
+    lifetime: "config, never deleted (archived instead)",
+    purgeKey: null,
+    priceColumns: [],
+    priceNullAfterDays: null,
+    otherNumericColumns: [
+      "unit_min_total",
+      "unit_max_total",
+      "max_cents",
+      "below_market_pct",
+      "floor_cents",
+      "read_ceiling_cents",
+      "sweep_minute",
+      "candidate_cap_per_day",
+      "version",
+      "match_version",
+    ],
+    owner: "web",
+    purgedByWorker: false,
+  },
+  {
+    schema: "app",
+    table: "product_source",
+    class: 3,
+    lifetime: "config",
+    purgeKey: null,
+    priceColumns: [],
+    priceNullAfterDays: null,
+    otherNumericColumns: ["ka_price_limit_cents"],
+    owner: "web",
+    purgedByWorker: false,
+  },
+  {
+    schema: "app",
+    table: "product_revision",
+    class: 3,
+    lifetime: "kept with the product (append-only)",
+    purgeKey: null,
+    priceColumns: [],
+    priceNullAfterDays: null,
+    otherNumericColumns: ["version"],
+    owner: "web",
+    purgedByWorker: false,
+  },
+  {
+    schema: "app",
+    table: "search",
+    class: 3,
+    lifetime: "config, retired instead of deleted",
+    purgeKey: null,
+    priceColumns: [],
+    priceNullAfterDays: null,
+    otherNumericColumns: ["floor_eur", "ceiling_eur", "day_interval_s", "night_interval_s"],
+    owner: "web",
+    purgedByWorker: false,
+  },
+  {
+    schema: "app",
+    table: "search_product",
+    class: 3,
+    lifetime: "config, rewritten on every save",
+    purgeKey: null,
+    priceColumns: [],
+    priceNullAfterDays: null,
+    otherNumericColumns: [],
+    owner: "web",
+    purgedByWorker: false,
+  },
+  {
+    schema: "app",
+    table: "setting",
+    class: 3,
+    lifetime: "config",
+    purgeKey: null,
+    priceColumns: [],
+    priceNullAfterDays: null,
+    otherNumericColumns: ["version"],
+    owner: "web",
     purgedByWorker: false,
   },
   // app, config and audit (ops)
@@ -345,4 +528,34 @@ export const RETENTION: readonly RetentionRule[] = [
     owner: "shared",
     purgedByWorker: false,
   },
+];
+
+// ADR 0038: the auth schema. Web writes these rows and has no DELETE on any of them; the worker
+// purges them. Kept apart from RETENTION, whose test covers exactly the app and ebay_live tables.
+const authRule = (
+  table: string,
+  lifetime: string,
+  purgeKey: string | null,
+  otherNumericColumns: readonly string[] = [],
+): RetentionRule => ({
+  schema: "auth",
+  table,
+  class: 3,
+  lifetime,
+  purgeKey,
+  priceColumns: [],
+  priceNullAfterDays: null,
+  otherNumericColumns,
+  owner: "web",
+  purgedByWorker: purgeKey !== null,
+});
+
+export const AUTH_RETENTION: readonly RetentionRule[] = [
+  authRule("app_user", "while the person exists, never deleted (disabled instead)", null),
+  authRule("login_attempt", "24 h", "created_at", ["failed_tries"]),
+  authRule("session", "30 d after the session ended", "ended_at"),
+  // The purge also deletes devices unused for 180 days (last_used_at).
+  authRule("device", "30 d after revoke or 180 d unused", "revoked_at"),
+  authRule("rate_counter", "2 d", "window_start", ["count"]),
+  authRule("auth_event", "90 d", "at"),
 ];

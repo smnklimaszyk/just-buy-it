@@ -1,4 +1,4 @@
-import { MODEL, type FetchFn } from "@ebay-sniper/llm";
+import type { FetchFn } from "@ebay-sniper/llm";
 import { hang, json, type Responder } from "./ebay.js";
 
 // A fake Anthropic Messages API for the worker tests: the real Claude adapter runs on its fetchFn.
@@ -20,6 +20,9 @@ export const PASS_ANSWER: FakeAnswer = {
   reason: "The listing matches the segment; nothing beyond normal used-market risk.",
 };
 
+// The code default of the claude.model setting.
+const DEFAULT_MODEL = "claude-sonnet-5-5";
+
 export type MessageOptions = {
   model?: string;
   stopReason?: string;
@@ -32,7 +35,7 @@ export function claudeMessage(answer: FakeAnswer | string, options: MessageOptio
     id: "msg_fake",
     type: "message",
     role: "assistant",
-    model: options.model ?? MODEL,
+    model: options.model ?? DEFAULT_MODEL,
     stop_reason: options.stopReason ?? "end_turn",
     content: [
       { type: "thinking", thinking: "", signature: "fake" },
@@ -47,17 +50,18 @@ export type FakeClaudeRequest = { headers: Record<string, string>; body: Record<
 export function createFakeClaude() {
   const requests: FakeClaudeRequest[] = [];
   const responders: Responder[] = [];
+  // Like the real API, an answer comes from the model the request named.
+  let requestedModel = DEFAULT_MODEL;
 
   const fetchFn: FetchFn = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     if (url.pathname !== "/v1/messages") throw new Error(`unexpected fake Claude request: ${url.pathname}`);
-    const body: unknown = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
-    requests.push({
-      headers: Object.fromEntries(new Headers(init?.headers).entries()),
-      body: typeof body === "object" && body !== null ? { ...body } : {},
-    });
+    const parsed: unknown = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+    const body: Record<string, unknown> = typeof parsed === "object" && parsed !== null ? { ...parsed } : {};
+    requests.push({ headers: Object.fromEntries(new Headers(init?.headers).entries()), body });
+    requestedModel = typeof body.model === "string" ? body.model : DEFAULT_MODEL;
     const responder = responders.shift();
-    return responder ? responder(url, init?.signal) : json(claudeMessage(PASS_ANSWER));
+    return responder ? responder(url, init?.signal) : json(claudeMessage(PASS_ANSWER, { model: requestedModel }));
   };
 
   return {
@@ -65,7 +69,7 @@ export function createFakeClaude() {
     requests,
     // The next calls get these answers, in order; after them, a pass.
     answer(...answers: (FakeAnswer | string)[]) {
-      for (const answer of answers) responders.push(() => json(claudeMessage(answer)));
+      for (const answer of answers) responders.push(() => json(claudeMessage(answer, { model: requestedModel })));
     },
     message(body: Record<string, unknown>) {
       responders.push(() => json(body));

@@ -7,6 +7,7 @@ import {
   integer,
   jsonb,
   pgSchema,
+  primaryKey,
   smallint,
   text,
   uuid,
@@ -116,6 +117,30 @@ export const screeningText = ebayLive.table(
     expiresAt: ts("expires_at").notNull(),
   },
   (table) => [index("screening_text_expires_at_idx").on(table.expiresAt)],
+);
+
+// The newest market snapshot's titles per product, for the "which listings counted" list. Deleted
+// 6 hours after seen_at, like classifier_sample. product_id is a plain uuid: no foreign key out
+// of ebay_live.
+export const marketPreview = ebayLive.table(
+  "market_preview",
+  {
+    productId: uuid("product_id").notNull(),
+    itemKey: text("item_key").notNull(),
+    legacyItemId: text("legacy_item_id").notNull(),
+    title: text("title").notNull(),
+    landedCents: integer("landed_cents"),
+    conditionGroup: text("condition_group"),
+    // counted, or the reason the listing did not count.
+    outcome: text("outcome").notNull(),
+    seenAt: ts("seen_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.productId, table.itemKey] }),
+    index("market_preview_seen_at_idx").on(table.seenAt),
+    check("market_preview_legacy_item_id_format", sql`${table.legacyItemId} ~ '^[0-9]{1,20}$'`),
+    check("market_preview_outcome_format", sql`${table.outcome} ~ '^[a-z][a-z0-9_]{0,39}$'`),
+  ],
 );
 
 // The rendered email of one delivery. A pending delivery without its message is never sent.

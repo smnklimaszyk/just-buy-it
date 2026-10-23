@@ -1,4 +1,4 @@
-import { insertAlert, insertAlertMessage, insertDelivery } from "@ebay-sniper/db";
+import { insertAlert, insertAlertMessage, insertDelivery, saveProductWithPlan } from "@ebay-sniper/db";
 import { createSmtpMailer } from "@ebay-sniper/notify";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -12,6 +12,7 @@ import { createSendHandler, type SendDeps } from "./send.js";
 // 12:00 CEST.
 const NOW = new Date("2026-10-21T10:00:00.000Z");
 const RECIPIENT = "owner@example.test";
+const SETTINGS_ENV = { claudeDailyCallLimit: 40, claudeDailySpendLimitMicrousd: 2_000_000, buyerProfile: null };
 const SMTP_CONFIG = {
   host: "smtp.test",
   port: 587,
@@ -32,15 +33,18 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await resetTables(db);
+  await db.admin.query(
+    "TRUNCATE app.product, app.product_source, app.product_revision, app.search, app.search_product, auth.app_user CASCADE",
+  );
 });
 
 // A pending delivery with its rendered message, as the alert transaction leaves it.
-async function arrangeDelivery(fields: { message?: boolean } = {}): Promise<string> {
+async function arrangeDelivery(fields: { message?: boolean; productKey?: string } = {}): Promise<string> {
   const alert = await insertAlert(db.admin, {
     itemKey: randomUUID().replaceAll("-", ""),
     candidateId: randomUUID(),
     screeningId: null,
-    segment: "gpu_3090",
+    segment: fields.productKey ?? "gpu_3090",
     finalVerdict: "pass",
     modelVerdict: "pass",
     blockedByCode: false,
@@ -104,6 +108,49 @@ describe("send, accepted (sections 2.4, 6.5)", () => {
     expect(
       await rows("SELECT status, attempt, sent_at, smtp_message_id, lease_until, hold_reason FROM app.alert_delivery"),
     ).toEqual([{ status: "sent", attempt: 1, sent_at: NOW, smtp_message_id: "<fake-1@smtp.test>", lease_until: null, hold_reason: null }]);
+  });
+
+  it("sends the product's people who are active at send time in Bcc, ALERT_TO as the only To (spec 9)", async () => {
+    const people = await rows<{ id: string; email: string }>(
+      `INSERT INTO auth.app_user (email, role) VALUES
+         ('ben@example.test', 'editor'), ('anna@example.test', 'admin'), ('carl@example.test', 'editor'), ($1, 'admin')
+       RETURNING id, email`,
+      [RECIPIENT],
+    );
+    const saved = await saveProductWithPlan(
+      db.admin,
+      {
+        kind: "create",
+        fields: {
+          name: "Portrait lens",
+          description: "A used 85 mm portrait lens for Sony E mount, the lens only.",
+          status: "active",
+          categoryId: "3323",
+          conditionIds: ["3000"],
+          searchWords: ["85mm"],
+          mustWords: [["85mm"]],
+          priceMode: "fixed",
+          maxCents: 52_000,
+          buyerProfile: "company",
+        },
+      },
+      { at: NOW, actor: "system:cli", userId: null, env: SETTINGS_ENV },
+    );
+    if (!saved.ok) throw new Error("save refused");
+    await db.admin.query("UPDATE app.product SET alert_recipient_ids = $2::uuid[] WHERE id = $1", [
+      saved.product.id,
+      people.map((person) => person.id),
+    ]);
+    const deliveryId = await arrangeDelivery({ productKey: saved.product.key });
+    // Disabled after the alert was made: send reads who gets it when it sends.
+    await db.admin.query("UPDATE auth.app_user SET status = 'disabled', disabled_at = $1 WHERE email = 'carl@example.test'", [NOW]);
+    const { smtp, send, job } = setup();
+
+    await send({ deliveryId }, job());
+
+    expect(smtp.sent).toHaveLength(1);
+    expect(smtp.sent[0]).toMatchObject({ to: RECIPIENT, bcc: ["anna@example.test", "ben@example.test"] });
+    expect(await rows("SELECT status FROM app.alert_delivery")).toEqual([{ status: "sent" }]);
   });
 
   it("logs the sent delivery with the SMTP reply code", async () => {
