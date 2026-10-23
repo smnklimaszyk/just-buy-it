@@ -3,7 +3,16 @@
   "extends": ["//"],
   "tasks": {
     "test": {
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/infra/host/ebay-deploy", "$TURBO_ROOT$/infra/docker-compose.yml", "$TURBO_ROOT$/.env.example"]
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/infra/host/ebay-deploy",
+        "$TURBO_ROOT$/infra/host/smoke",
+        "$TURBO_ROOT$/infra/host/live-check",
+        "$TURBO_ROOT$/infra/docker-compose.yml",
+        "$TURBO_ROOT$/infra/Dockerfile",
+        "$TURBO_ROOT$/infra/traefik/ebay-sniper.yml",
+        "$TURBO_ROOT$/.env.example"
+      ]
     }
   }
 }

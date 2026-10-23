@@ -5,7 +5,11 @@ import { createAppTokenCache, createBrowseClient, createItemClient, type FetchFn
 import { createClaudeScreener, type ClaudeScreener } from "@ebay-sniper/llm";
 import { createSmtpMailer, type CreateTransportFn, type SmtpMailer } from "@ebay-sniper/notify";
 import type { WorkerEnv } from "./env.js";
+import { createCategorySuggestHandler } from "./handlers/category-suggest.js";
 import { createEnrichHandler } from "./handlers/enrich.js";
+import { createHeldRequeueHandler } from "./handlers/held-requeue.js";
+import { createMarketNightlyHandler } from "./handlers/market-nightly.js";
+import { createMarketSnapshotHandler } from "./handlers/market-snapshot.js";
 import { createPollTickHandler } from "./handlers/poll-tick.js";
 import { createPollHandler, type LogFn, type SearchDeps } from "./handlers/poll.js";
 import { createPurgeHandler } from "./handlers/purge.js";
@@ -15,6 +19,7 @@ import { createSendHandler } from "./handlers/send.js";
 import { createSweepHandler } from "./handlers/sweep.js";
 import { createHeartbeat, type Heartbeat } from "./heartbeat.js";
 import { createItemKey } from "./item-key.js";
+import { createRequestQueuer } from "./market/requests.js";
 
 export type WorkerIo = {
   pool: DbPool;
@@ -59,15 +64,19 @@ export function createWiring(env: WorkerEnv, io: WorkerIo): Wiring {
   const screener = env.claude.apiKey === null ? null : createClaudeScreener({ apiKey: env.claude.apiKey, fetchFn: io.claudeFetch });
   const claude = { screener, callLimit: env.claude.callLimit, spendLimitMicrousd: env.claude.spendLimitMicrousd };
   const alerts = { recipient: env.alertTo, buyerProfile: env.buyerProfile };
+  const createSearch = (reserve: ReserveEbayCall) => createBrowseClient(browse(reserve)).searchItems;
+  const itemKey = createItemKey(env.itemKeySecret);
+  const { settingsEnv } = env;
   // Polls and sweeps search the same way.
   const search: SearchDeps = {
     pool,
     queue,
     clock,
     reserve: io.reserve,
-    createSearch: (reserve) => createBrowseClient(browse(reserve)).searchItems,
-    itemKey: createItemKey(env.itemKeySecret),
+    createSearch,
+    itemKey,
     postalCode: env.postalCode,
+    settingsEnv,
     log,
   };
   // null while SMTP is not configured (env.smtp null); the send handler then holds every delivery.
@@ -76,7 +85,7 @@ export function createWiring(env: WorkerEnv, io: WorkerIo): Wiring {
     screener,
     mailer,
     handlers: {
-      "poll-tick": createPollTickHandler({ pool, queue, clock, claudeCallLimit: env.claude.callLimit, log }),
+      "poll-tick": createPollTickHandler({ pool, queue, clock, settingsEnv, queueRequests: createRequestQueuer({ pool, queue }), log }),
       poll: createPollHandler(search),
       sweep: createSweepHandler(search),
       enrich: createEnrichHandler({
@@ -86,13 +95,18 @@ export function createWiring(env: WorkerEnv, io: WorkerIo): Wiring {
         getItem: createItemClient(browse(io.reserve)).getItem,
         postalCode: env.postalCode,
         claude,
+        settingsEnv,
         alerts,
         log,
       }),
-      screen: createScreenHandler({ pool, queue, clock, claude, alerts, log }),
+      screen: createScreenHandler({ pool, queue, clock, claude, settingsEnv, alerts, log }),
       send: createSendHandler({ pool, clock, mailer, log }),
       relay: createRelayHandler({ pool, queue, clock, log }),
       purge: createPurgeHandler({ pool, clock, log }),
+      "market-nightly": createMarketNightlyHandler({ pool, queue, log }),
+      "market-snapshot": createMarketSnapshotHandler({ pool, clock, reserve: io.reserve, createSearch, itemKey, postalCode: env.postalCode, log }),
+      "category-suggest": createCategorySuggestHandler({ pool, clock, reserve: io.reserve, createSearch, log }),
+      "held-requeue": createHeldRequeueHandler({ pool, queue, clock, log }),
     },
   };
 }

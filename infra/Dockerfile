@@ -5,6 +5,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/server/package.json apps/server/
 COPY apps/ops/package.json apps/ops/
 COPY apps/worker/package.json apps/worker/
+COPY apps/web/package.json apps/web/
 COPY packages/logging/package.json packages/logging/
 COPY packages/ebay/package.json packages/ebay/
 COPY packages/db/package.json packages/db/
@@ -14,11 +15,11 @@ COPY packages/notify/package.json packages/notify/
 
 FROM base AS deps
 RUN pnpm install --frozen-lockfile --prod --filter "@ebay-sniper/server..." --filter "@ebay-sniper/ops..." \
-  --filter "@ebay-sniper/worker..."
+  --filter "@ebay-sniper/worker..." --filter "@ebay-sniper/web..."
 
 FROM base AS build
 RUN pnpm install --frozen-lockfile --filter "@ebay-sniper/server..." --filter "@ebay-sniper/ops..." \
-  --filter "@ebay-sniper/worker..."
+  --filter "@ebay-sniper/worker..." --filter "@ebay-sniper/web..."
 COPY packages/logging packages/logging
 COPY packages/ebay packages/ebay
 COPY packages/db packages/db
@@ -30,9 +31,12 @@ COPY packages/notify packages/notify
 COPY apps/server apps/server
 COPY apps/ops apps/ops
 COPY apps/worker apps/worker
-RUN pnpm --filter "@ebay-sniper/server..." --filter "@ebay-sniper/ops..." --filter "@ebay-sniper/worker..." build
+# With design-system/ (tokens, component CSS, fonts, icon paths) that the asset build reads.
+COPY apps/web apps/web
+RUN pnpm --filter "@ebay-sniper/server..." --filter "@ebay-sniper/ops..." --filter "@ebay-sniper/worker..." \
+  --filter "@ebay-sniper/web..." build
 
-# One image for the server, the worker and the migrate one-off (apps/ops), tagged
+# One image for the server, the worker, the web service and the migrate one-off (apps/ops), tagged
 # ebay-sniper-server:<sha>. Compose picks the app with working_dir and command.
 FROM node:24.21.0-alpine
 ARG GIT_SHA
@@ -51,6 +55,10 @@ COPY --from=build --chown=node:node /repo/packages/notify/dist ./packages/notify
 COPY --from=build --chown=node:node /repo/apps/server/dist ./apps/server/dist
 COPY --from=build --chown=node:node /repo/apps/ops/dist ./apps/ops/dist
 COPY --from=build --chown=node:node /repo/apps/worker/dist ./apps/worker/dist
+# dist/assets holds the hashed styles, fonts and page scripts; dist/ui reads the icon paths from
+# design-system/icons.json at run time, and the fonts' OFL notice ships with them.
+COPY --from=build --chown=node:node /repo/apps/web/dist ./apps/web/dist
+COPY --from=build --chown=node:node /repo/apps/web/design-system ./apps/web/design-system
 USER node
 WORKDIR /app/apps/server
 EXPOSE 3000

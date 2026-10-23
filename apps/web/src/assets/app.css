@@ -1,0 +1,319 @@
+/* Just-Buy-It page layout on top of the design system (tokens.css, components/bundle.css).
+   Token variables only: no colours, sizes, layers or durations of its own (guard tests).
+   Also the server-side variants ADR 0039 lists: native <dialog>, <details> menu, :target drawer,
+   :checked states, the SVG meter fill and the 8-cell code input. */
+
+html,
+body {
+  height: 100%;
+}
+
+/* ── Page ── */
+/* minmax(0, 1fr): a wide child (a table, a long word) must not widen the column past the screen. */
+.app-page,
+.app-stack,
+.app-gallery__case {
+  grid-template-columns: minmax(0, 1fr);
+}
+.app-page {
+  display: grid;
+  gap: var(--space-32);
+  align-content: start;
+  padding: var(--space-24);
+}
+@media (max-width: 639px) {
+  .app-page {
+    padding: var(--space-16);
+  }
+}
+.app-stack {
+  display: grid;
+  gap: var(--space-16);
+  align-content: start;
+}
+.app-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+}
+.app-reading {
+  max-width: var(--reading-width);
+}
+/* The sign-in pages (spec 8.3): one centred column of about 400 px. */
+.app-narrow {
+  width: 100%;
+  max-width: calc(var(--reading-width) / 1.8);
+  margin-inline: auto;
+}
+/* Main column and an aside (the product form's cost and market boxes) from 1024 px. */
+.app-columns {
+  display: grid;
+  gap: var(--space-32);
+}
+@media (min-width: 1024px) {
+  .app-columns {
+    grid-template-columns: minmax(0, 1fr) var(--sidebar-width);
+    align-items: start;
+  }
+}
+.app-gallery__case {
+  display: grid;
+  gap: var(--space-12);
+  padding-top: var(--space-24);
+  border-top: 1px solid var(--border);
+}
+
+/* ── Skip link: hidden until it has the keyboard focus ── */
+.app-skip {
+  position: fixed;
+  top: var(--space-8);
+  left: var(--space-8);
+  z-index: var(--layer-tooltip);
+  padding: var(--space-8) var(--space-12);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  color: var(--fg);
+  box-shadow: var(--shadow-md);
+  clip-path: inset(50%);
+}
+.app-skip:focus-visible {
+  clip-path: none;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ── Product form: only the fields of the checked price rule (spec 8.4) ── */
+.app-price-rule:has(input[name="priceMode"][value="fixed"]:checked) .app-when-market,
+.app-price-rule:has(input[name="priceMode"][value="below_market"]:checked) .app-when-fixed {
+  display: none;
+}
+
+/* ── Links that look like controls ── */
+a.ia-iconbtn,
+a.ia-tab,
+a.ia-pager__num,
+a.ia-menu__item {
+  text-decoration: none;
+}
+a.ia-pager__num {
+  display: inline-grid;
+  place-items: center;
+}
+
+/* ── Theme toggle: both labels are in the markup, data-theme picks one ── */
+:root:not([data-theme="dark"]) .app-when-dark,
+:root[data-theme="dark"] .app-when-light {
+  display: none;
+}
+
+/* ── Sidebar drawer below 768 px: the menu link targets the sidebar ── */
+.app-drawer-toggle {
+  display: none;
+}
+@media (max-width: 767px) {
+  .app-drawer-toggle {
+    display: inline-grid;
+  }
+  .ia-shell__sidebar:target {
+    transform: none;
+  }
+  .ia-shell:not(:has(.ia-shell__sidebar:target)) .ia-shell__scrim {
+    display: none;
+  }
+}
+
+/* ── Checkbox and radio follow :checked, so a click looks right without script ── */
+.ia-check__box-wrap:has(input:checked) .ia-check__box {
+  background: var(--action);
+  border-color: var(--action);
+}
+.ia-check__box-wrap:has(input:not(:checked)) .ia-check__box {
+  background: var(--bg);
+  border-color: var(--border-control);
+}
+.ia-check__box-wrap:has(input:not(:checked)) .ia-check__box .ia-icon {
+  visibility: hidden;
+}
+.ia-check.is-disabled .ia-check__box-wrap .ia-check__box {
+  background: var(--bg-muted);
+  border-color: var(--border);
+}
+.ia-radio:has(input:checked) .ia-radio__dot {
+  background: var(--action);
+  border-color: var(--action);
+}
+.ia-radio:has(input:checked) .ia-radio__dot::after {
+  transform: scale(1);
+}
+.ia-radio.is-on:has(input:not(:checked)) .ia-radio__dot {
+  background: var(--bg);
+  border-color: var(--border-control);
+}
+.ia-radio.is-on:has(input:not(:checked)) .ia-radio__dot::after {
+  transform: scale(0);
+}
+.ia-radio-group--cards .ia-radio:has(input:checked) {
+  border-color: var(--action);
+  box-shadow: 0 0 0 1px var(--action);
+}
+.ia-radio-group--cards .ia-radio.is-on:has(input:not(:checked)) {
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+/* ── Code input with 8 cells: the gap sits after the 4th (ADR 0039) ── */
+.ia-otp:has(> :nth-child(8)) > :nth-child(3) {
+  margin-right: 0;
+}
+.ia-otp:has(> :nth-child(8)) > :nth-child(4) {
+  margin-right: var(--space-8);
+}
+@media (max-width: 400px) {
+  .ia-otp-wrap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ia-otp {
+    gap: var(--space-4);
+  }
+  /* Eight cells share the row on a 320 px screen instead of running past it. */
+  .ia-otp__cell {
+    flex: 1 1 0;
+    min-width: 0;
+    width: auto;
+    max-width: var(--control-lg);
+  }
+}
+
+/* ── Menu as <details> ── */
+.ia-menu-wrap > summary {
+  list-style: none;
+}
+.ia-menu-wrap > summary::-webkit-details-marker {
+  display: none;
+}
+.ia-menu-wrap > summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.ia-menu__item[aria-disabled="true"] {
+  color: var(--fg-disabled);
+  pointer-events: none;
+}
+
+/* ── Market trend: one series in the first chart colour, the middle half as a faint band ── */
+.app-trend {
+  display: block;
+  width: 100%;
+  height: var(--space-96);
+  overflow: visible;
+}
+.app-trend__band {
+  fill: var(--chart-1);
+  fill-opacity: 0.15;
+}
+.app-trend__line {
+  fill: none;
+  stroke: var(--chart-1);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.app-trend__point {
+  fill: var(--chart-1);
+  stroke: var(--bg);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+/* ── Accordion as <details> (the reference opens it with a button and .is-open) ── */
+.app-disclosure > summary {
+  list-style: none;
+}
+.app-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.app-disclosure[open] .ia-acc__chev {
+  transform: rotate(180deg);
+}
+
+/* ── Native <dialog> (the reference wraps its dialog in an overlay root) ── */
+dialog.ia-dialog {
+  max-width: calc(100% - 2 * var(--space-16));
+  padding: 0;
+  border: 0;
+  color: var(--fg);
+}
+dialog.ia-dialog:not([open]) {
+  display: none;
+}
+dialog.ia-dialog--sm {
+  width: 440px;
+}
+dialog.ia-dialog--md {
+  width: 560px;
+}
+dialog.ia-dialog--lg {
+  width: 720px;
+}
+dialog.ia-dialog::backdrop {
+  background: var(--scrim);
+}
+@media (max-width: 639px) {
+  dialog.ia-dialog {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92dvh;
+    margin: auto 0 0;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    animation: ia-sheet-up var(--duration-slow) var(--ease-drawer);
+  }
+}
+
+/* ── Meter fill as an SVG rect (no inline style under the CSP) ── */
+.ia-meter__fill {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+.ia-meter__fill rect {
+  fill: var(--fg-muted);
+}
+.ia-meter--warning .ia-meter__fill rect {
+  fill: var(--warning-fg);
+}
+.ia-meter--danger .ia-meter__fill rect {
+  fill: var(--danger-fg);
+}
+
+/* ── Toasts: bottom right, gone after 5 s without script ── */
+.app-toasts {
+  position: fixed;
+  right: var(--space-24);
+  bottom: var(--space-24);
+  z-index: var(--layer-toast);
+  display: grid;
+  gap: var(--space-8);
+  justify-items: end;
+  pointer-events: none;
+}
+.app-toasts .ia-toast {
+  pointer-events: auto;
+  animation:
+    ia-toast-in var(--duration-base) var(--ease-out),
+    app-toast-out var(--duration-fast) var(--ease-out) 5s forwards;
+}
+@keyframes app-toast-out {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+@media (max-width: 639px) {
+  .app-toasts {
+    right: var(--space-16);
+    bottom: var(--space-16);
+    left: var(--space-16);
+  }
+}

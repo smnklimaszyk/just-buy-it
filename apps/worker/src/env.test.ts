@@ -49,6 +49,7 @@ describe("worker env (section 9.1)", () => {
       itemKeySecret: REQUIRED.ITEM_KEY_V1,
       buyerProfile: "company",
       claude: { apiKey: null, callLimit: 40, spendLimitMicrousd: 2_000_000 },
+      settingsEnv: { claudeDailyCallLimit: 40, claudeDailySpendLimitMicrousd: 2_000_000, buyerProfile: null },
       smtp: null,
       alertTo: "owner@example.test",
       logLevel: "info",
@@ -77,15 +78,24 @@ describe("worker env (section 9.1)", () => {
     expect(error.message).not.toContain("db-env-SENTINEL-PASS-1d9e");
   });
 
-  it("reads the Claude key, the model and both caps; 0 is allowed for either cap", () => {
+  it("reads the Claude key and both caps; 0 is allowed for either cap", () => {
     const env = parseEnv({
       ...REQUIRED,
       ANTHROPIC_API_KEY: API_KEY,
-      CLAUDE_MODEL: "claude-sonnet-5-5",
       CLAUDE_DAILY_CALL_LIMIT: "0",
       CLAUDE_DAILY_SPEND_LIMIT_USD: "2.50",
     });
     expect(env.claude).toEqual({ apiKey: API_KEY, callLimit: 0, spendLimitMicrousd: 2_500_000 });
+  });
+
+  it("bounds the settings by the two Claude ceilings and defaults the buyer profile from BUYER_PROFILE (spec 2.5)", () => {
+    expect(parseEnv(REQUIRED).settingsEnv).toEqual({
+      claudeDailyCallLimit: 40,
+      claudeDailySpendLimitMicrousd: 2_000_000,
+      buyerProfile: null,
+    });
+    const env = parseEnv({ ...REQUIRED, CLAUDE_DAILY_CALL_LIMIT: "25", CLAUDE_DAILY_SPEND_LIMIT_USD: "1.50", BUYER_PROFILE: "private" });
+    expect(env.settingsEnv).toEqual({ claudeDailyCallLimit: 25, claudeDailySpendLimitMicrousd: 1_500_000, buyerProfile: "private" });
   });
 
   it("treats the empty strings Compose passes for unset variables as unset", () => {
@@ -170,7 +180,11 @@ describe("worker env (section 9.1)", () => {
     });
   });
 
-  it("refuses a spend limit below 0 or with more than two decimals, a fractional call limit and any other model", () => {
+  it("ignores CLAUDE_MODEL: the model is the claude.model setting since v2 (spec 10.4)", () => {
+    expect(parseEnv({ ...REQUIRED, CLAUDE_MODEL: "claude-opus-5-5" })).toEqual(parseEnv(REQUIRED));
+  });
+
+  it("refuses a spend limit below 0 or with more than two decimals and a fractional call limit", () => {
     for (const value of ["-1", "2.555", "2,50", "1e3"]) {
       expect(failure({ ...REQUIRED, CLAUDE_DAILY_SPEND_LIMIT_USD: value }).message).toBe(
         "invalid environment: CLAUDE_DAILY_SPEND_LIMIT_USD",
@@ -178,6 +192,5 @@ describe("worker env (section 9.1)", () => {
     }
     expect(parseEnv({ ...REQUIRED, CLAUDE_DAILY_SPEND_LIMIT_USD: "2" }).claude.spendLimitMicrousd).toBe(2_000_000);
     expect(failure({ ...REQUIRED, CLAUDE_DAILY_CALL_LIMIT: "1.5" }).message).toBe("invalid environment: CLAUDE_DAILY_CALL_LIMIT");
-    expect(failure({ ...REQUIRED, CLAUDE_MODEL: "claude-opus-5-5" }).message).toBe("invalid environment: CLAUDE_MODEL");
   });
 });

@@ -1,5 +1,4 @@
-import type { BuyerProfile } from "@ebay-sniper/domain";
-import { MODEL } from "@ebay-sniper/llm";
+import type { BuyerProfile, SettingsEnv } from "@ebay-sniper/domain";
 import { parseSender, SenderError, type Sender, type SmtpConfig } from "@ebay-sniper/notify";
 import { z } from "zod";
 
@@ -28,7 +27,8 @@ const envSchema = z.object({
   ALERT_TO: z.email(),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).optional(),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
-  CLAUDE_MODEL: z.literal(MODEL).optional(),
+  // CLAUDE_MODEL is gone: the model is the claude.model setting (spec 10.4). A leftover value is
+  // ignored like any unknown variable; the deploy warns about it.
   CLAUDE_DAILY_CALL_LIMIT: z.coerce.number().int().nonnegative().optional(),
   CLAUDE_DAILY_SPEND_LIMIT_USD: z.string().regex(/^\d+(\.\d{1,2})?$/).optional(),
   SMTP_HOST: z.string().optional(),
@@ -88,6 +88,8 @@ export type WorkerEnv = {
   itemKeySecret: string;
   buyerProfile: BuyerProfile;
   claude: ClaudeEnv;
+  // The .env bounds of app.setting (spec 2.5): every job that reads the settings applies them.
+  settingsEnv: SettingsEnv;
   // null: alerts stay pending with hold_reason smtp_not_configured.
   smtp: SmtpConfig | null;
   alertTo: string;
@@ -107,6 +109,8 @@ export function parseEnv(source: Record<string, string | undefined>): WorkerEnv 
     throw new EnvError(`invalid environment: ${names.join(", ")}`);
   }
   const env = parsed.data;
+  const callLimit = env.CLAUDE_DAILY_CALL_LIMIT ?? 40;
+  const spendLimitMicrousd = usdToMicrousd(env.CLAUDE_DAILY_SPEND_LIMIT_USD ?? "2");
   return {
     databaseUrl: env.DATABASE_URL,
     statementTimeoutMs: env.DB_STATEMENT_TIMEOUT_MS ?? 10_000,
@@ -117,10 +121,11 @@ export function parseEnv(source: Record<string, string | undefined>): WorkerEnv 
     postalCode: env.EBAY_ENDUSERCTX_POSTAL_CODE ?? "80331",
     itemKeySecret: env.ITEM_KEY_V1,
     buyerProfile: env.BUYER_PROFILE ?? "company",
-    claude: {
-      apiKey: env.ANTHROPIC_API_KEY ?? null,
-      callLimit: env.CLAUDE_DAILY_CALL_LIMIT ?? 40,
-      spendLimitMicrousd: usdToMicrousd(env.CLAUDE_DAILY_SPEND_LIMIT_USD ?? "2"),
+    claude: { apiKey: env.ANTHROPIC_API_KEY ?? null, callLimit, spendLimitMicrousd },
+    settingsEnv: {
+      claudeDailyCallLimit: callLimit,
+      claudeDailySpendLimitMicrousd: spendLimitMicrousd,
+      buyerProfile: env.BUYER_PROFILE ?? null,
     },
     smtp: smtpConfig(env),
     alertTo: env.ALERT_TO,

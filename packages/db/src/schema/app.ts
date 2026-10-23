@@ -1,5 +1,4 @@
-import { FEED_IDS, SEGMENTS } from "@ebay-sniper/domain";
-import { sql, type SQL } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -14,20 +13,11 @@ import {
   text,
   unique,
   uuid,
-  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { ts } from "../columns.js";
+import { CONDITION_GROUPS, codeFormat, id, oneOf } from "./helpers.js";
 
 export const app = pgSchema("app");
-
-// `column IN ('a', 'b')` for a check constraint. The values are code constants, never input.
-const oneOf = (column: AnyPgColumn, values: readonly string[]): SQL =>
-  sql`${column} IN (${sql.raw(values.map((value) => `'${value}'`).join(", "))})`;
-
-// A reason or outcome code as the domain writes it.
-const codeFormat = (column: AnyPgColumn): SQL => sql`${column} ~ '^[a-z][a-z0-9_]{0,39}$'`;
-
-const id = () => uuid("id").primaryKey().default(sql`uuidv7()`);
 
 // One row per eBay pool and 24-hour window. Windows of one resource never overlap: the exclusion
 // constraint is in migration 0001, because drizzle-kit cannot express EXCLUDE.
@@ -136,7 +126,8 @@ export const feed = app.table(
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    check("feed_id_known", oneOf(table.id, FEED_IDS)),
+    // The MVP's feeds and segments, as migration 0004 checks them (spec 10.5). v2 reads neither table.
+    check("feed_id_known", oneOf(table.id, ["gpu", "ram", "pc"])),
     check("feed_category_id_format", sql`${table.categoryId} ~ '^[0-9]{1,12}$'`),
     check("feed_price_ceiling_positive", sql`${table.priceCeilingCents} > 0`),
     check("feed_intervals", sql`${table.dayIntervalS} >= 60 AND ${table.nightIntervalS} >= 60`),
@@ -165,7 +156,7 @@ export const segmentRule = app.table(
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    check("segment_rule_segment_known", oneOf(table.segment, SEGMENTS)),
+    check("segment_rule_segment_known", oneOf(table.segment, ["gpu_3090", "gpu_3090ti", "gpu_4090", "ram_ddr4", "ram_ddr5", "pc_4090"])),
     check("segment_rule_kind_known", oneOf(table.ruleKind, ["per_item", "per_gb"])),
     check(
       "segment_rule_per_item_fields",
@@ -286,15 +277,49 @@ export const candidate = app.table(
     rejectReason: text("reject_reason"),
     enrichStartedAt: ts("enrich_started_at"),
     createdAt: ts("created_at").notNull().defaultNow(),
+    // v2 (spec 2.8, migration 0010). NULL on rows Release 0 wrote.
+    productVersion: integer("product_version"),
+    matchVersion: integer("match_version"),
+    conditionGroup: text("condition_group"),
+    // The limit the candidate passed: max_cents, or the market limit below the cap.
+    limitCents: integer("limit_cents"),
+    priceMode: text("price_mode"),
+    marketValueId: uuid("market_value_id"),
+    // Written by enrich at hand-off; screen and its retry use them (spec 4.5).
+    promptVersion: text("prompt_version"),
+    model: text("model"),
+    effort: text("effort"),
+    heldReason: text("held_reason"),
   },
   (table) => [
     index("candidate_segment_created_idx").on(table.segment, table.createdAt.desc()),
     check("candidate_source_known", oneOf(table.source, ["poll", "sweep"])),
     check(
       "candidate_decision_known",
-      oneOf(table.decision, ["pending", "alerted", "blocked", "rejected_after_enrich", "gone", "expired"]),
+      // wrong_product and held widened in migration 0010 (spec 2.9).
+      oneOf(table.decision, [
+        "pending",
+        "alerted",
+        "blocked",
+        "rejected_after_enrich",
+        "gone",
+        "expired",
+        "wrong_product",
+        "held",
+      ]),
     ),
     check("candidate_reject_reason_format", sql`${table.rejectReason} IS NULL OR ${codeFormat(table.rejectReason)}`),
+    check("candidate_price_mode_known", sql`${table.priceMode} IS NULL OR ${oneOf(table.priceMode, ["fixed", "below_market"])}`),
+    check(
+      "candidate_condition_group_known",
+      sql`${table.conditionGroup} IS NULL OR ${oneOf(table.conditionGroup, CONDITION_GROUPS)}`,
+    ),
+    check("candidate_held_reason_format", sql`${table.heldReason} IS NULL OR ${codeFormat(table.heldReason)}`),
+    check(
+      "candidate_versions_positive",
+      sql`(${table.productVersion} IS NULL OR ${table.productVersion} >= 1) AND (${table.matchVersion} IS NULL OR ${table.matchVersion} >= 1)`,
+    ),
+    check("candidate_limit_positive", sql`${table.limitCents} IS NULL OR ${table.limitCents} > 0`),
   ],
 );
 
@@ -363,6 +388,21 @@ export const llmUsageDaily = app.table(
       "llm_usage_daily_counts",
       sql`${table.calls} >= 0 AND ${table.reservedMicrousd} >= 0 AND ${table.spentMicrousd} >= 0`,
     ),
+  ],
+);
+
+// Claude calls per product and Berlin day, counted with the daily row, for the per-product share
+// of spec 4.4. product_key is app.product.key. Kept 30 days.
+export const llmUsageProductDaily = app.table(
+  "llm_usage_product_daily",
+  {
+    dayBerlin: date("day_berlin", { mode: "string" }).notNull(),
+    productKey: text("product_key").notNull(),
+    calls: integer("calls").notNull().default(0),
+  },
+  (table) => [
+    primaryKey({ columns: [table.dayBerlin, table.productKey] }),
+    check("llm_usage_product_daily_calls", sql`${table.calls} >= 0`),
   ],
 );
 
@@ -485,7 +525,8 @@ export const auditEvent = app.table(
     detail: jsonb("detail").notNull().default(sql`'{}'::jsonb`),
   },
   (table) => [
-    check("audit_event_actor_format", sql`${table.actor} ~ '^[a-z]+:[a-z_-]{1,40}$'`),
+    // Widened in migration 0010 so user:<uuid> fits (spec 2.9).
+    check("audit_event_actor_format", sql`${table.actor} ~ '^[a-z]+:[a-z0-9_-]{1,40}$'`),
     check("audit_event_action_format", sql`${table.action} ~ '^[a-z][a-z0-9_.]{0,63}$'`),
   ],
 );

@@ -1,0 +1,38 @@
+{
+  "id": "20-espresso-silvia",
+  "set": "v2",
+  "group": "legitimate",
+  "product_kind": "other",
+  "product": {
+    "name": "Rancilio Silvia espresso machine",
+    "description": "A used Rancilio Silvia single-boiler espresso machine, version V3 or later, complete with portafilter and working.",
+    "must_contain": [["rancilio"], ["silvia"]],
+    "must_not_contain": ["defekt", "ersatzteil"],
+    "conditions": ["refurbished", "used"],
+    "limit_eur": 520
+  },
+  "listing": {
+    "title": "Rancilio Silvia V5 Espressomaschine Siebträger Edelstahl",
+    "condition": "Gebraucht",
+    "condition_description": "Voll funktionsfähig, frisch entkalkt.",
+    "price_eur": 430,
+    "shipping_eur": 19.9,
+    "landed_eur": 449.9,
+    "owner_max_eur": 520,
+    "percent_of_max": 87,
+    "seller": { "feedback_score": 207, "feedback_percent": 99.5, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 9,
+    "item_specifics": [
+      { "name": "Marke", "value": "Rancilio" },
+      { "name": "Modell", "value": "Silvia V5" },
+      { "name": "Farbe", "value": "Edelstahl" }
+    ],
+    "image_count": 8,
+    "description": "Unsere Rancilio Silvia V5 war vier Jahre täglich im Einsatz und läuft einwandfrei. Vor dem Verkauf entkalkt, neue Brühgruppendichtung und neues Duschsieb. Dabei sind der Siebträger mit Einfach- und Doppelsieb, ein Blindsieb und ein Tamper. Kleine Gebrauchsspuren an der Abtropfschale. Gut verpackt im Originalkarton, Versand mit Hermes.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["pass"], "product_match_in": ["match"] }
+}

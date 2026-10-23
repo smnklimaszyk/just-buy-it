@@ -1,17 +1,11 @@
+import type { ClaudeEffort } from "@ebay-sniper/domain";
 import { z } from "zod";
-import { costMicroUsd, type TokenUsage } from "./cost.js";
+import type { TokenUsage } from "./cost.js";
 import { ClaudeError, type AdapterFailureCode } from "./failures.js";
-import { SYSTEM_PROMPT } from "./prompt.v1.js";
+import { costMicroUsd, type ScreeningModelId } from "./models.js";
+import { SYSTEM_PROMPT } from "./prompt.v2.js";
 import { ANSWER_JSON_SCHEMA, parseAnswer, type ScreeningAnswer } from "./schema.js";
-import {
-  ANTHROPIC_MESSAGES_URL,
-  ANTHROPIC_VERSION,
-  EFFORT,
-  INFERENCE_GEO,
-  MAX_TOKENS,
-  MODEL,
-  REQUEST_TIMEOUT_MS,
-} from "./screening-config.v1.js";
+import { ANTHROPIC_MESSAGES_URL, ANTHROPIC_VERSION, INFERENCE_GEO, MAX_TOKENS, REQUEST_TIMEOUT_MS } from "./screening-config.v1.js";
 
 export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -29,9 +23,12 @@ export type ScreeningResult = {
   inferenceGeo: string | null;
 };
 
+// One call: the model and effort fixed on the candidate (spec 4.5) and the rendered user message.
+export type ScreeningCall = { model: ScreeningModelId; effort: ClaudeEffort; userMessage: string };
+
 export type ClaudeScreener = {
   // One paid call. Retries are the job's (section 5.5), never the adapter's.
-  screen(userMessage: string, signal?: AbortSignal): Promise<ScreeningResult>;
+  screen(call: ScreeningCall, signal?: AbortSignal): Promise<ScreeningResult>;
 };
 
 // The parts of a Messages API response the adapter reads; everything else is ignored.
@@ -47,17 +44,17 @@ const messageSchema = z.object({
 });
 
 // Section 5.3. No tools, no fallbacks and no fallback beta header: no other model answers in
-// place of the configured one (ADR 0019). No prompt caching: the system prompt is below the
-// cacheable minimum.
-function requestBody(userMessage: string): string {
+// place of the requested one (ADR 0019). No prompt caching: the worst case of spec 4.2 is priced
+// without it.
+function requestBody(call: ScreeningCall): string {
   return JSON.stringify({
-    model: MODEL,
+    model: call.model,
     max_tokens: MAX_TOKENS,
     thinking: { type: "adaptive" },
-    output_config: { effort: EFFORT, format: { type: "json_schema", schema: ANSWER_JSON_SCHEMA } },
+    output_config: { effort: call.effort, format: { type: "json_schema", schema: ANSWER_JSON_SCHEMA } },
     inference_geo: INFERENCE_GEO,
     system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: userMessage }],
+    messages: [{ role: "user", content: call.userMessage }],
   });
 }
 
@@ -96,7 +93,7 @@ function transportFailure(timeout: AbortSignal, signal: AbortSignal | undefined)
 export function createClaudeScreener(options: ClaudeScreenerOptions): ClaudeScreener {
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
   return {
-    async screen(userMessage, signal) {
+    async screen(call, signal) {
       const timeout = AbortSignal.timeout(timeoutMs);
       let response: Response;
       try {
@@ -107,7 +104,7 @@ export function createClaudeScreener(options: ClaudeScreenerOptions): ClaudeScre
             "anthropic-version": ANTHROPIC_VERSION,
             "content-type": "application/json",
           },
-          body: requestBody(userMessage),
+          body: requestBody(call),
           signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
         });
       } catch {
@@ -130,17 +127,19 @@ export function createClaudeScreener(options: ClaudeScreenerOptions): ClaudeScre
       if (!envelope.success) throw new ClaudeError({ code: "schema_invalid", status });
       const message = envelope.data;
       const usage = { inputTokens: message.usage.input_tokens, outputTokens: message.usage.output_tokens };
+      // Billed at the requested model's prices, also when another model answered.
+      const billed = { usage, costMicroUsd: costMicroUsd(call.model, usage) };
       // stop_reason first: a cut-off answer is never parsed.
-      if (message.stop_reason === "max_tokens") throw new ClaudeError({ code: "truncated", status, usage });
-      if (message.stop_reason === "refusal") throw new ClaudeError({ code: "refused", status, usage });
+      if (message.stop_reason === "max_tokens") throw new ClaudeError({ code: "truncated", status, billed });
+      if (message.stop_reason === "refusal") throw new ClaudeError({ code: "refused", status, billed });
       const parsed = parseAnswer(parseJson(message.content.findLast((block) => block.type === "text")?.text));
-      if (!parsed.ok) throw new ClaudeError({ code: "schema_invalid", status, usage });
-      if (message.model !== MODEL) throw new ClaudeError({ code: "unexpected_model", status, usage });
+      if (!parsed.ok) throw new ClaudeError({ code: "schema_invalid", status, billed });
+      if (message.model !== call.model) throw new ClaudeError({ code: "unexpected_model", status, billed });
       return {
         answer: parsed.answer,
         model: message.model,
         usage,
-        costMicroUsd: costMicroUsd(usage),
+        costMicroUsd: billed.costMicroUsd,
         inferenceGeo: message.usage.inference_geo ?? null,
       };
     },

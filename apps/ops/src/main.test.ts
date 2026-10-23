@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./migrate-command.js", () => ({ runMigrateCommand: vi.fn(async () => 3) }));
-vi.mock("./feeds-command.js", () => ({ runFeedsCommand: vi.fn(async () => 1) }));
-vi.mock("./rules-command.js", () => ({ runRulesCommand: vi.fn(async () => 0) }));
+vi.mock("./products-command.js", () => ({ runProductsCommand: vi.fn(async () => 1) }));
+vi.mock("./settings-command.js", () => ({ runSettingsCommand: vi.fn(async () => 0) }));
+vi.mock("./searches-command.js", () => ({ runSearchesCommand: vi.fn(async () => 0), runPlanCommand: vi.fn(async () => 1) }));
+vi.mock("./auth-command.js", () => ({ runAuthCommand: vi.fn(async () => 2) }));
+
+const USAGE =
+  "usage: node dist/main.js migrate | products list|show|set|pause|resume|archive|pause-all|import-legacy ... | searches list | plan | settings list|set ... | auth users|user|sessions|unlock|code ...\n";
 
 async function runMain(argv: string[]): Promise<void> {
   vi.resetModules();
@@ -22,9 +27,16 @@ describe("main", () => {
     await runMain(["drop-everything"]);
 
     expect(process.exitCode).toBe(2);
-    expect(stderr).toHaveBeenCalledWith(
-      "usage: node dist/main.js migrate | feeds pause|resume <feed> | feeds set <feed> <field> <value> | rules list | rules set <segment> <field> <value>\n",
-    );
+    expect(stderr).toHaveBeenCalledWith(USAGE);
+  });
+
+  it.each([["feeds", "pause", "gpu"], ["rules", "list"]])("no longer knows %s: v2 does not read app.feed or app.segment_rule", async (...argv) => {
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+    await runMain(argv);
+
+    expect(process.exitCode).toBe(2);
+    expect(stderr).toHaveBeenCalledWith(USAGE);
   });
 
   it("runs the migrate command with the real env loader and exits with its code", async () => {
@@ -36,6 +48,14 @@ describe("main", () => {
     expect(runMigrateCommand).toHaveBeenCalledWith(
       expect.objectContaining({ loadEnv, runMigrations: expect.any(Function), log: expect.any(Object) }),
     );
+  });
+
+  it("hands the migrate command the web role check and the bootstrap of the first admins", async () => {
+    await runMain(["migrate"]);
+
+    const { runMigrateCommand } = await import("./migrate-command.js");
+    const { bootstrapAdmins, checkWebRole } = await import("@ebay-sniper/db/queue");
+    expect(runMigrateCommand).toHaveBeenCalledWith(expect.objectContaining({ bootstrapAdmins, checkWebRole }));
   });
 
   it("passes the migrate, role and pg-boss functions of the db package to the migrate command", async () => {
@@ -56,22 +76,67 @@ describe("main", () => {
     );
   });
 
-  it.each([
-    ["feeds", ["pause", "gpu"], 1],
-    ["rules", ["list"], 0],
-  ] as const)("runs %s with its arguments, the database env, the db pool and the system clock", async (command, args, code) => {
-    await runMain([command, ...args]);
+  it("runs settings with its arguments and the settings ceilings and screening evals", async () => {
+    await runMain(["settings", "set", "alerts.per_hour", "5"]);
 
-    const { runFeedsCommand } = await import("./feeds-command.js");
-    const { runRulesCommand } = await import("./rules-command.js");
-    const run = command === "feeds" ? runFeedsCommand : runRulesCommand;
-    const { loadDatabaseEnv } = await import("./env.js");
+    const { runSettingsCommand } = await import("./settings-command.js");
+    const env = await import("./env.js");
+    expect(process.exitCode).toBe(0);
+    expect(runSettingsCommand).toHaveBeenCalledWith(
+      ["set", "alerts.per_hour", "5"],
+      expect.objectContaining({ loadSettingsEnv: env.loadSettingsEnv, screeningEvals: expect.any(Array) }),
+    );
+  });
+
+  it("runs searches list and plan with their arguments", async () => {
+    // runMain loads the modules afresh, so each call is checked before the next one.
+    await runMain(["searches", "list"]);
+    expect(process.exitCode).toBe(0);
+    expect((await import("./searches-command.js")).runSearchesCommand).toHaveBeenCalledWith(
+      ["list"],
+      expect.objectContaining({ loadSettingsEnv: (await import("./env.js")).loadSettingsEnv }),
+    );
+
+    await runMain(["plan"]);
+    expect(process.exitCode).toBe(1);
+    expect((await import("./searches-command.js")).runPlanCommand).toHaveBeenCalledWith(
+      [],
+      expect.objectContaining({ loadSettingsEnv: (await import("./env.js")).loadSettingsEnv }),
+    );
+  });
+
+  it("runs auth with its arguments, the AUTH_KEY loader and the terminal question", async () => {
+    await runMain(["auth", "code", "info@intra-ai.de", "--ref", "K7QF"]);
+
+    const { runAuthCommand } = await import("./auth-command.js");
+    const env = await import("./env.js");
+    expect(process.exitCode).toBe(2);
+    expect(runAuthCommand).toHaveBeenCalledWith(
+      ["code", "info@intra-ai.de", "--ref", "K7QF"],
+      expect.objectContaining({ loadAuthKey: env.loadAuthKey, ask: expect.any(Function) }),
+    );
+  });
+
+  it("runs products with its arguments, the real env loaders, the db pool, the system clock and the passed screening evals", async () => {
+    await runMain(["products", "list"]);
+
+    const { runProductsCommand } = await import("./products-command.js");
+    const env = await import("./env.js");
     const { systemClock } = await import("./clock.js");
     const db = await import("@ebay-sniper/db");
-    expect(process.exitCode).toBe(code);
-    expect(run).toHaveBeenCalledWith(
-      args,
-      expect.objectContaining({ loadEnv: loadDatabaseEnv, createPool: db.createPool, clock: systemClock }),
+    const llm = await import("@ebay-sniper/llm/catalog");
+    expect(process.exitCode).toBe(1);
+    expect(runProductsCommand).toHaveBeenCalledWith(
+      ["list"],
+      expect.objectContaining({
+        loadEnv: env.loadDatabaseEnv,
+        loadSettingsEnv: env.loadSettingsEnv,
+        loadAuthKey: env.loadAuthKey,
+        screeningEvals: llm.passedChoices(llm.PROMPT_VERSION),
+        createPool: db.createPool,
+        clock: systemClock,
+        ask: expect.any(Function),
+      }),
     );
   });
 });

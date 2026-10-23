@@ -5,42 +5,38 @@ import {
   getCandidateByListingId,
   getListing,
   getScreening,
+  loadSettings,
   MAX_SCREEN_ATTEMPTS,
+  newestOkMarketValues,
   pauseScreening,
   releaseScreeningLease,
   reserveLlmCall,
   screeningPausedUntil,
+  setCandidateDecision,
   settleLlmCall,
   type ScreeningUsage,
 } from "@ebay-sniper/db";
 import type { JobHandler } from "@ebay-sniper/db/queue";
-import { berlinDay, type SegmentRule } from "@ebay-sniper/domain";
+import { berlinDay, productBlockFields, resolveLimit, type ProductRules, type SettingsEnv } from "@ebay-sniper/domain";
 import {
   buildScreeningRequest,
   ClaudeError,
-  MODEL,
-  PROMPT_VERSION,
   RETRY_DELAY_SECONDS,
   retryDelaySeconds,
-  WORST_CASE_COST_MICROUSD,
+  screeningChoice,
+  worstCaseCostMicrousd,
   type ScreeningResult,
 } from "@ebay-sniper/llm";
 import type { AlertScreening } from "@ebay-sniper/notify";
-import {
-  createAlert,
-  knownCandidate,
-  logAlertCreated,
-  segmentRule,
-  type AlertDeps,
-  type AlertSource,
-  type ClaudeSettings,
-} from "./enrich.js";
+import { candidateProduct, createAlert, logAlertCreated, type AlertDeps, type AlertSource, type ClaudeSettings } from "./enrich.js";
 import { inTransaction } from "./poll.js";
 
 export type Sleep = (ms: number, signal: AbortSignal) => Promise<void>;
 
 export type ScreenDeps = AlertDeps & {
   claude: ClaudeSettings;
+  // The .env bounds of the settings (spec 2.5).
+  settingsEnv: SettingsEnv;
   // Tests pass a fake; the worker uses the timer.
   sleep?: Sleep;
 };
@@ -50,12 +46,12 @@ const sleepFor: Sleep = (ms, signal) => setTimeout(ms, undefined, { signal });
 // ADR 0019: auth_failed pauses screening for all listings.
 const SCREENING_PAUSE_MS = 15 * 60_000;
 
-// The owner's maximum landed price for this item: the per-item max, or per-GB max x total GB
-// (the classifier gives every per-GB candidate its total).
-function ownerMaxCents(rule: SegmentRule, totalGb: number | null): number {
-  if (rule.kind === "per_item") return rule.maxLandedCents;
+// The product's current limit for this item (spec 9): the limit, or per GB the limit per GB x the
+// listing's total (the matcher gives every per-GB candidate its total).
+function limitCents(rules: ProductRules, limit: number, totalGb: number | null): number {
+  if (!rules.perGb) return limit;
   if (totalGb === null) throw new Error("a per-GB candidate has no total GB");
-  return rule.maxCentsPerGb * totalGb;
+  return limit * totalGb;
 }
 
 type AlertBase = Omit<AlertSource, "screening" | "screeningId">;
@@ -112,14 +108,9 @@ export function createScreenHandler(deps: ScreenDeps): JobHandler<"screen"> {
     const now = deps.clock.now();
     const screener = deps.claude.screener;
     const listing = await getListing(deps.pool, listingId);
-    const found = await getCandidateByListingId(deps.pool, listingId);
+    const candidate = await getCandidateByListingId(deps.pool, listingId);
     // A candidate with its decision made (alerted, rejected, gone) is not screened again.
-    if (listing === null || found === null || found.decision !== "pending") return;
-    const candidate = await knownCandidate(deps.pool, found);
-    if (candidate === null) {
-      deps.log.info({ event: "screen_done", listing_id: listingId, decision: "expired", reason: "unknown_segment" });
-      return;
-    }
+    if (listing === null || candidate === null || candidate.decision !== "pending") return;
     if (candidate.priceCents === null) return;
     // Only getItem content (enrich done) of a listing that is not gone reaches Claude.
     if (listing.goneAt !== null) return;
@@ -129,10 +120,23 @@ export function createScreenHandler(deps: ScreenDeps): JobHandler<"screen"> {
     // Section 5.6 code signals, which enrich took from the title and the raw description before
     // the masking. They go to Claude and set the floors of the final verdict.
     const codeSignals = candidate.codeSignals;
-    const rule = await segmentRule(deps.pool, candidate.segment);
-    const base: AlertBase = { candidate, listing, content, rule, codeSignals };
+    // Spec 9: a product paused or archived after enrich makes no Claude call and no alert. A key
+    // with no product (a segment that was never imported) ends like an unknown one.
+    const found = await candidateProduct(deps.pool, candidate);
+    if ("ended" in found) {
+      await setCandidateDecision(deps.pool, candidate.id, { decision: "expired", rejectReason: found.ended });
+      deps.log.info({ event: "screen_done", listing_id: listingId, decision: "expired", reason: found.ended });
+      return;
+    }
+    const { product } = found;
+    const base: AlertBase = { candidate, product, listing, content, codeSignals };
 
-    const claim = await claimScreening(deps.pool, { itemKey: candidate.itemKey, promptVersion: PROMPT_VERSION, model: MODEL, now });
+    // The settings as they are now: a model, effort or cap change applies to the next candidate
+    // without a restart (spec 9).
+    const resolved = await loadSettings(deps.pool, deps.settingsEnv);
+    const choice = screeningChoice(candidate, resolved.settings);
+    const { model, effort } = choice;
+    const claim = await claimScreening(deps.pool, { itemKey: candidate.itemKey, promptVersion: choice.promptVersion, model, now });
     // Attempt 2 lost its lease (a crash): the claim wrote failed with attempts_exhausted, and the
     // alert goes out as not screened.
     if (claim.kind === "exhausted") {
@@ -175,15 +179,32 @@ export function createScreenHandler(deps: ScreenDeps): JobHandler<"screen"> {
       await finishNotScreened(deps, claim, base, { status: "skipped", code: "paused", usage: null }, now);
       return;
     }
+    // Spec 4.2: the buyer's product element beside the seller's listing.
+    // In market mode the limit comes from the newest ok value of the listing's condition group
+    // before its first sighting, else the newest one up to now, as enrich resolved it (spec 6.4).
+    const group = candidate.conditionGroup;
+    const values =
+      product.rules.priceMode === "below_market"
+        ? [
+            ...(await newestOkMarketValues(deps.pool, product.id, product.matchVersion, listing.firstSeenAt)),
+            ...(await newestOkMarketValues(deps.pool, product.id, product.matchVersion, now)),
+          ]
+        : [];
+    const resolvedLimit =
+      group === null
+        ? null
+        : resolveLimit({ ...product.rules, matchVersion: product.matchVersion }, group, values, listing.firstSeenAt, now);
+    const value = resolvedLimit?.marketValue ?? null;
+    const limit = limitCents(product.rules, resolvedLimit?.limitCents ?? product.rules.maxCents, candidate.totalGb);
     const request = buildScreeningRequest(
+      productBlockFields(product.rules, { limitCents: limit, market: value === null ? null : { valueCents: value.valueCents, status: "ok" } }),
       {
-        segment: candidate.segment,
         title: content.title,
         condition: content.condition,
         conditionDescription: content.conditionDescription,
         priceCents: candidate.priceCents,
         shippingCents: candidate.shippingCents,
-        ownerMaxCents: ownerMaxCents(rule, candidate.totalGb),
+        ownerMaxCents: limit,
         seller: {
           feedbackScore: content.sellerFeedbackScore,
           feedbackPercent: content.sellerFeedbackPct,
@@ -202,12 +223,14 @@ export function createScreenHandler(deps: ScreenDeps): JobHandler<"screen"> {
     );
     // Section 5.5: both daily caps in one reservation before the call; the actual cost settles it.
     const day = berlinDay(now);
-    const worst = WORST_CASE_COST_MICROUSD;
+    const worst = worstCaseCostMicrousd(model);
     const reservation = await reserveLlmCall(deps.pool, {
       day,
       worstMicrousd: worst,
-      callLimit: deps.claude.callLimit,
-      spendLimitMicrousd: deps.claude.spendLimitMicrousd,
+      // min(setting, .env ceiling), from this job's read of the settings (spec 4.4).
+      callLimit: resolved.settings.claudeDailyCallLimit,
+      spendLimitMicrousd: resolved.settings.claudeDailySpendLimitMicrousd,
+      productKey: product.key,
     });
     // A refused reservation makes no call.
     if (!reservation.ok) {
@@ -217,7 +240,7 @@ export function createScreenHandler(deps: ScreenDeps): JobHandler<"screen"> {
     const callStart = deps.clock.now().getTime();
     let result: ScreeningResult;
     try {
-      result = await screener.screen(request.userMessage, job.signal);
+      result = await screener.screen({ model, effort, userMessage: request.userMessage }, job.signal);
     } catch (error) {
       if (!(error instanceof ClaudeError)) throw error;
       // Every call that reached Anthropic stores its usage and cost, failures included. Without

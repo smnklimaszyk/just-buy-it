@@ -7,6 +7,11 @@
       "source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./catalog": {
+      "source": "./src/catalog.ts",
+      "types": "./dist/catalog.d.ts",
+      "default": "./dist/catalog.js"
     }
   },
   "scripts": {

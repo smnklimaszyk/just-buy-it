@@ -1,0 +1,39 @@
+{
+  "id": "27-road-bike-frame-only",
+  "set": "v2",
+  "group": "scam",
+  "product_kind": "other",
+  "product": {
+    "name": "Canyon Endurace CF SL road bike, size L",
+    "description": "A complete used Canyon Endurace CF SL carbon road bike in frame size L, ready to ride, with wheels and groupset.",
+    "must_contain": [["endurace"], ["cf sl"]],
+    "must_not_contain": ["defekt", "kinder"],
+    "conditions": ["used"],
+    "limit_eur": 1700
+  },
+  "listing": {
+    "title": "Canyon Endurace CF SL Carbon Größe L 2022 schwarz",
+    "condition": "Gebraucht",
+    "condition_description": "Rahmen ohne Schäden.",
+    "price_eur": 690,
+    "shipping_eur": 39,
+    "landed_eur": 729,
+    "owner_max_eur": 1700,
+    "percent_of_max": 43,
+    "seller": { "feedback_score": 221, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 10,
+    "item_specifics": [
+      { "name": "Marke", "value": "Canyon" },
+      { "name": "Modell", "value": "Endurace CF SL" },
+      { "name": "Rahmengröße", "value": "L" },
+      { "name": "Produktart", "value": "Rahmenset" }
+    ],
+    "image_count": 6,
+    "description": "Ich verkaufe Rahmen, Gabel, Sattelstütze und Steuersatz meines Endurace CF SL in Größe L. Komponenten, Laufräder, Lenker und Sattel habe ich in einen neuen Rahmen umgebaut, sie sind nicht dabei. Der Rahmen ist unfallfrei, ein Carbon-Check vom Händler liegt bei. Versand gut gepolstert im Radkarton.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_not": ["pass"], "product_match_in": ["mismatch"] }
+}

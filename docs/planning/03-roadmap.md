@@ -1,5 +1,7 @@
 # Roadmap and estimates
 
+Since v2, products are data; segment names below are history.
+
 As of 2026-10-19. Owner: Simon Klimaszyk, building alone with Claude Code (D-01). Phase plans: `phases/`. ADRs: `../adr/README.md`.
 
 ## 1. Gates

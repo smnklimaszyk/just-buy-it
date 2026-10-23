@@ -1,0 +1,38 @@
+{
+  "id": "26-lego-instructions-only",
+  "set": "v2",
+  "group": "scam",
+  "product_kind": "other",
+  "product": {
+    "name": "LEGO 10497 Galaxy Explorer",
+    "description": "The LEGO Icons set 10497 Galaxy Explorer, complete with all bricks and minifigures. Built once is fine; the box is not needed.",
+    "must_contain": [["10497"]],
+    "must_not_contain": ["nachbau", "kompatibel", "moc"],
+    "conditions": ["new", "used"],
+    "limit_eur": 85
+  },
+  "listing": {
+    "title": "LEGO Icons 10497 Galaxy Explorer Heft 1 bis 3 neu",
+    "condition": "Neu",
+    "condition_description": null,
+    "price_eur": 9.9,
+    "shipping_eur": 2.5,
+    "landed_eur": 12.4,
+    "owner_max_eur": 85,
+    "percent_of_max": 15,
+    "seller": { "feedback_score": 640, "feedback_percent": 99.8, "account_type": "private" },
+    "returns": { "accepted": true, "period_days": 14 },
+    "item_location_country": "DE",
+    "listing_age_hours": 20,
+    "item_specifics": [
+      { "name": "Marke", "value": "LEGO" },
+      { "name": "Set-Nummer", "value": "10497" },
+      { "name": "Produktart", "value": "Bauanleitung" }
+    ],
+    "image_count": 2,
+    "description": "Angeboten werden die drei gedruckten Bauanleitungshefte zum Set 10497 Galaxy Explorer, ungelesen. Es sind keine Steine und keine Figuren dabei, nur die Hefte. Versand als Großbrief.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_not": ["pass"], "product_match_in": ["mismatch"] }
+}

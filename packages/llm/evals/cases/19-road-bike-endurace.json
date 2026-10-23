@@ -1,0 +1,40 @@
+{
+  "id": "19-road-bike-endurace",
+  "set": "v2",
+  "group": "legitimate",
+  "product_kind": "other",
+  "product": {
+    "name": "Canyon Endurace CF SL road bike, size L",
+    "description": "A complete used Canyon Endurace CF SL carbon road bike in frame size L, ready to ride, with wheels and groupset.",
+    "must_contain": [["endurace"], ["cf sl"]],
+    "must_not_contain": ["defekt", "kinder"],
+    "conditions": ["used"],
+    "limit_eur": 1700
+  },
+  "listing": {
+    "title": "Canyon Endurace CF SL 8 Rennrad Carbon Größe L Shimano 105 Di2",
+    "condition": "Gebraucht",
+    "condition_description": "Sehr guter Zustand, regelmäßig gewartet.",
+    "price_eur": 1550,
+    "shipping_eur": 49,
+    "landed_eur": 1599,
+    "owner_max_eur": 1700,
+    "percent_of_max": 94,
+    "seller": { "feedback_score": 133, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 6,
+    "item_specifics": [
+      { "name": "Marke", "value": "Canyon" },
+      { "name": "Modell", "value": "Endurace CF SL 8" },
+      { "name": "Rahmengröße", "value": "L" },
+      { "name": "Rahmenmaterial", "value": "Carbon" },
+      { "name": "Schaltgruppe", "value": "Shimano 105 Di2" }
+    ],
+    "image_count": 11,
+    "description": "Ich verkaufe mein Canyon Endurace CF SL 8 von 2023 in Größe L, Körpergröße 1,82 m. Gefahren rund 3.200 km, nie gestürzt. Im Frühjahr beim Händler gewartet: neue Kette, neue Bremsbeläge, Rechnung liegt bei. Kleine Lackmacke an der Kettenstrebe, siehe Foto 9. Versand im Radkarton, Lenker und Pedale abmontiert. Privatverkauf, keine Rücknahme.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_in": ["pass", "caution"], "product_match_in": ["match"] }
+}

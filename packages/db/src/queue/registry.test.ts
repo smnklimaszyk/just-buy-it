@@ -17,6 +17,10 @@ describe("queue registry (section 2.3)", () => {
       ["send", "exclusive", null, 40_000, 90, 0, 0, 1],
       ["relay", "exclusive", "* * * * *", 20_000, 60, 0, 0, 1],
       ["purge", "exclusive", "*/15 * * * *", 120_000, 600, 0, 0, 1],
+      ["market-nightly", "exclusive", "0 2 * * *", 30_000, 120, 0, 0, 1],
+      ["market-snapshot", "exclusive", null, 100_000, 150, 0, 0, 1],
+      ["category-suggest", "exclusive", null, 40_000, 90, 0, 0, 1],
+      ["held-requeue", "exclusive", "5 22,23 * * *", 20_000, 60, 0, 0, 1],
     ]);
   });
 
@@ -26,16 +30,16 @@ describe("queue registry (section 2.3)", () => {
     }
   });
 
-  it("keys the exclusive queues on feedId, segment and deliveryId", () => {
-    expect(QUEUES.poll.singletonKey({ feedId: "ram" })).toBe("ram");
-    expect(QUEUES.sweep.singletonKey({ segment: "gpu_4090" })).toBe("gpu_4090");
+  it("keys the exclusive queues on searchId, productKey and deliveryId", () => {
+    expect(QUEUES.poll.singletonKey({ searchId: "s3" })).toBe("s3");
+    expect(QUEUES.sweep.singletonKey({ productKey: "p_lens_50mm" })).toBe("p_lens_50mm");
     expect(QUEUES.send.singletonKey({ deliveryId: LISTING_ID })).toBe(LISTING_ID);
     expect(QUEUES["poll-tick"].singletonKey({})).toBeNull();
     expect(QUEUES.enrich.singletonKey({ listingId: LISTING_ID })).toBeNull();
   });
 
   it("sizes the worker pool at the summed handler concurrency plus one (section 2.5)", () => {
-    expect(WORKER_POOL_MAX).toBe(10);
+    expect(WORKER_POOL_MAX).toBe(14);
   });
 });
 
@@ -67,26 +71,28 @@ const LISTING_ID = "0199f0a2-7c1e-7b3a-9d4e-2f6a8b0c1d2e";
 describe("payloads", () => {
   it("accept the surrogate keys of each queue", () => {
     expect(QUEUES["poll-tick"].parse({})).toEqual({});
-    expect(QUEUES.poll.parse({ feedId: "gpu" })).toEqual({ feedId: "gpu" });
-    expect(QUEUES.sweep.parse({ segment: "ram_ddr5" })).toEqual({ segment: "ram_ddr5" });
+    expect(QUEUES.poll.parse({ searchId: "s12" })).toEqual({ searchId: "s12" });
+    expect(QUEUES.sweep.parse({ productKey: "p_pram_fox" })).toEqual({ productKey: "p_pram_fox" });
     expect(QUEUES.enrich.parse({ listingId: LISTING_ID })).toEqual({ listingId: LISTING_ID });
     expect(QUEUES.screen.parse({ listingId: LISTING_ID })).toEqual({ listingId: LISTING_ID });
     expect(QUEUES.send.parse({ deliveryId: LISTING_ID })).toEqual({ deliveryId: LISTING_ID });
     expect(QUEUES.relay.parse({})).toEqual({});
     expect(QUEUES.purge.parse({})).toEqual({});
+    expect(QUEUES["market-snapshot"].parse({ productId: LISTING_ID })).toEqual({ productId: LISTING_ID });
   });
 
   it.each([
-    ["poll", { feedId: "gpu", itemId: "v1|123456789012|0" }],
-    ["poll", { feedId: "tv" }],
+    ["poll", { searchId: "s1", itemId: "v1|123456789012|0" }],
+    ["poll", { searchId: "tv" }],
     ["poll", {}],
-    ["sweep", { segment: "gpu_5090" }],
+    ["sweep", { productKey: "GPU_5090" }],
     ["enrich", { listingId: "v1|123456789012|0" }],
     ["enrich", { listingId: LISTING_ID, title: "RTX 3090" }],
     ["screen", { listingId: LISTING_ID.toUpperCase() }],
     ["send", { deliveryId: 42 }],
     ["relay", { url: "https://www.ebay.de/itm/123" }],
     ["purge", null],
+    ["category-suggest", { requestId: LISTING_ID, q: "RTX" }],
     ["poll-tick", []],
   ] as const)("refuse a %s payload %j and name only the queue and field", (name, data) => {
     let caught: unknown;
@@ -99,7 +105,7 @@ describe("payloads", () => {
     expect(caught).toBeInstanceOf(QueuePayloadError);
     const message = (caught as Error).message;
     expect(message.startsWith(`${name} payload: `)).toBe(true);
-    for (const value of ["v1|", "tv", "gpu_5090", "RTX", LISTING_ID.toUpperCase(), "42", "ebay.de"]) {
+    for (const value of ["v1|", "tv", "GPU_5090", "gpu_4090", "RTX", LISTING_ID.toUpperCase(), "42", "ebay.de"]) {
       expect(message).not.toContain(value);
     }
   });

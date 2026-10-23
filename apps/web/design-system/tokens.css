@@ -1,0 +1,391 @@
+/* Intra AI — generated from tokens.json */
+:root, [data-theme="light"] {
+  --bg: var(--white); /* Default page and app canvas. Everything sits on this unless a rule below says otherwise. */
+  --bg-subtle: var(--gray-50); /* Recessed chrome: platform sidebar, alternating website sections, table headers. Never for cards. */
+  --bg-raised: var(--white); /* Things that float or are lifted: menus, popovers, dialogs, toasts, the composer. Pair with a shadow token. */
+  --bg-muted: var(--gray-100); /* Hover and pressed fills for quiet controls, inline code, skeleton blocks, selected sidebar row. */
+  --bg-inverse: var(--gray-950); /* Tooltips and the rare inverted surface. Text on it is fg-inverse. */
+  --scrim: rgba(15, 18, 21, 0.48); /* Backdrop behind dialogs and drawers. No blur. */
+  --fg: var(--gray-950); /* Primary text and icons. Reads on bg, bg-subtle, bg-raised and bg-muted in both themes (>= 14:1). */
+  --fg-muted: var(--gray-600); /* Secondary text: descriptions, metadata, table cells, inactive nav. Reads on every bg-* surface (>= 6:1). */
+  --fg-subtle: var(--gray-500); /* Tertiary text: timestamps, captions, placeholder text, helper hints. Meets 4.5:1 on bg, bg-subtle and bg-raised; do not place on bg-muted. */
+  --fg-disabled: var(--gray-300); /* Disabled labels only (exempt from contrast rules). Never for information. */
+  --fg-inverse: var(--white); /* Text and icons on bg-inverse. */
+  --border: var(--gray-200); /* Decorative hairlines: dividers, card and table outlines, section rules. 1px only. Not enough on its own to identify a control. */
+  --border-control: var(--gray-400); /* Borders that identify an interactive control: inputs, checkboxes, switches (off), secondary buttons. >= 3:1 on bg and bg-subtle. */
+  --action: var(--blue-600); /* The one primary action per view: primary button fill, send button, checked checkbox and switch. Text on it is on-action. White-label clients override the blue ramp, not this token. */
+  --action-hover: var(--blue-700); /* Hover fill for action (pointer devices only). */
+  --action-press: var(--blue-800); /* Pressed fill for action. */
+  --on-action: var(--white); /* Label and icon on action, action-hover and action-press (>= 4.5:1). */
+  --action-subtle: var(--blue-50); /* Tinted fill for selected or toggled-on quiet controls (composer tool toggles, selected segment in marketing, info banners). */
+  --action-subtle-fg: var(--blue-700); /* Text and icons on action-subtle; also the active sidebar item's icon. */
+  --link: var(--blue-700); /* Inline links in prose. Underline on hover; always underline in dense body text where color alone would carry the meaning. */
+  --brand: var(--blue-500); /* Intra Blue, the identity color. The logo mark, focus-adjacent accents, large display figures, charts' first series. Never as a text color below 24px, never as a button fill. */
+  --brand-subtle: var(--blue-100); /* Soft brand tint for illustrations-by-shape, empty-state marks and the agent avatar ground. */
+  --focus-ring: var(--blue-500); /* Keyboard focus: 2px solid ring with a 2px offset in the surface color. >= 3:1 on every surface in both themes. */
+  --success-fg: var(--green-700); /* Success text and icons on bg-* surfaces and success-subtle. */
+  --success-subtle: var(--green-50); /* Success banner and badge fill. */
+  --warning-fg: var(--amber-800); /* Warning text and icons on bg-* surfaces and warning-subtle. */
+  --warning-subtle: var(--amber-50); /* Warning banner and badge fill. */
+  --danger: var(--red-600); /* Destructive button fill and error field border. Text on it is on-danger. */
+  --danger-hover: var(--red-700); /* Hover fill for danger. */
+  --on-danger: var(--white); /* Label and icon on danger and danger-hover. */
+  --danger-fg: var(--red-700); /* Error text and icons (field errors, failed states) on bg-* surfaces and danger-subtle. */
+  --danger-subtle: var(--red-50); /* Error banner and badge fill. */
+  --info-fg: var(--blue-700); /* Informational text and icons; on bg-* surfaces and info-subtle. */
+  --info-subtle: var(--blue-50); /* Informational banner fill. */
+  --syntax-keyword: var(--blue-700); /* Code and JSON: keywords, booleans, null. Reads on bg-subtle (the code-block ground) and bg. */
+  --syntax-string: var(--green-700); /* Code and JSON: strings. Reads on bg-subtle and bg. */
+  --syntax-number: var(--amber-800); /* Code and JSON: numbers and constants. Reads on bg-subtle and bg. */
+  --syntax-property: var(--red-700); /* Code: keys and attributes (YAML and JSON keys, HTML attributes, Python keyword arguments). Reads on bg-subtle and bg. */
+  --syntax-function: var(--violet-700); /* Code: function and class names, decorators, built-ins. Reads on bg-subtle and bg. */
+  --syntax-comment: var(--gray-500); /* Code: comments and punctuation. Reads on bg-subtle and bg (4.5:1). */
+  --file-doc: var(--blue-600); /* FileTypeIcon label fill for text documents (DOC, DOCX, ODT, TXT, MD). White label on it. */
+  --file-sheet: var(--green-700); /* FileTypeIcon label fill for spreadsheets (XLS, XLSX, CSV). White label on it. */
+  --file-pdf: var(--red-600); /* FileTypeIcon label fill for PDF. White label on it. */
+  --file-slides: var(--amber-600); /* FileTypeIcon label fill for presentations (PPT, PPTX, KEY). White label on it. */
+  --file-code: var(--violet-600); /* FileTypeIcon label fill for code and data (JSON, YAML, PY, JS). White label on it. */
+  --file-other: var(--gray-600); /* FileTypeIcon label fill for images, archives and anything else. White label on it. */
+  --chart-1: var(--blue-500); /* First chart series (the brand). Marks only, never text. >= 3:1 on bg. */
+  --chart-2: var(--blue-800); /* Second chart series. >= 3:1 on bg. */
+  --chart-3: var(--gray-400); /* Third chart series, and 'other' / comparison series. >= 3:1 on bg. More than three series: use a table or small multiples. */
+  --blue-50: oklch(0.975 0.012 259.9); /* Brand ramp. Step 50, #f2f7ff. Reach it through the semantic roles (action, link, brand, focus-ring); white-label clients regenerate this ramp at their hue on the same lightness ladder. */
+  --blue-100: oklch(0.945 0.026 259.9); /* Brand ramp. Step 100, #e3eeff. Reach it through the semantic roles (action, link, brand, focus-ring); white-label clients regenerate this ramp at their hue on the same lightness ladder. */
+  --blue-200: oklch(0.895 0.051 259.9); /* Brand ramp. Step 200, #c9deff. Reach it through the semantic roles (action, link, brand, focus-ring); white-label clients regenerate this ramp at their hue on the same lightness ladder. */
+  --blue-300: oklch(0.820 0.090 259.9); /* Brand ramp. Step 300, #a2c6ff. Reach it through the semantic roles (action, link, brand, focus-ring); white-label clients regenerate this ramp at their hue on the same lightness ladder. */
+  --blue-400: oklch(0.720 0.146 259.9); /* Brand ramp. Step 400, #6da4ff. Reach it through the semantic roles (action, link, brand, focus-ring); white-label clients regenerate this ramp at their hue on the same lightness ladder. */
+  --blue-500: oklch(0.636 0.177 259.9); /* Brand ramp. Step 500 = Intra Blue #4587f4, the logo color (3.49:1 on white: never a text or label-carrying fill color). Reach it through the semantic roles (action, link, brand, focus-ring); white-label clients regenerate this ramp at their hue on the same lightness ladder. */
+  --blue-600: oklch(0.555 0.172 259.9); /* Brand ramp. Step 600, #2f6ed6. Reach it through the semantic roles (action, link, brand, focus-ring); white-label clients regenerate this ramp at their hue on the same lightness ladder. */
+  --blue-700: oklch(0.475 0.150 259.9); /* Brand ramp. Step 700, #2358af. Reach it through the semantic roles (action, link, brand, focus-ring); white-label clients regenerate this ramp at their hue on the same lightness ladder. */
+  --blue-800: oklch(0.395 0.122 259.9); /* Brand ramp. Step 800, #1a4387. Reach it through the semantic roles (action, link, brand, focus-ring); white-label clients regenerate this ramp at their hue on the same lightness ladder. */
+  --blue-900: oklch(0.310 0.090 259.9); /* Brand ramp. Step 900, #122e5d. Reach it through the semantic roles (action, link, brand, focus-ring); white-label clients regenerate this ramp at their hue on the same lightness ladder. */
+  --blue-950: oklch(0.235 0.062 259.9); /* Brand ramp. Step 950, #0b1d3b. Reach it through the semantic roles (action, link, brand, focus-ring); white-label clients regenerate this ramp at their hue on the same lightness ladder. */
+  --green-50: oklch(0.975 0.030 152.0); /* Success ramp. Step 50, #e9fded. Use success-fg and success-subtle, not the step. */
+  --green-100: oklch(0.945 0.060 152.0); /* Success ramp. Step 100, #d0f9d9. Use success-fg and success-subtle, not the step. */
+  --green-200: oklch(0.895 0.100 152.0); /* Success ramp. Step 200, #aaf0bc. Use success-fg and success-subtle, not the step. */
+  --green-300: oklch(0.820 0.140 152.0); /* Success ramp. Step 300, #77de96. Use success-fg and success-subtle, not the step. */
+  --green-400: oklch(0.720 0.160 152.0); /* Success ramp. Step 400, #42c070. Use success-fg and success-subtle, not the step. */
+  --green-500: oklch(0.636 0.160 152.0); /* Success ramp. Step 500, #1aa557. Use success-fg and success-subtle, not the step. */
+  --green-600: oklch(0.555 0.145 152.0); /* Success ramp. Step 600, #048a45. Use success-fg and success-subtle, not the step. */
+  --green-700: oklch(0.475 0.125 152.0); /* Success ramp. Step 700, #006f36. Use success-fg and success-subtle, not the step. */
+  --green-800: oklch(0.395 0.100 152.0); /* Success ramp. Step 800, #07552a. Use success-fg and success-subtle, not the step. */
+  --green-900: oklch(0.310 0.075 152.0); /* Success ramp. Step 900, #073b1c. Use success-fg and success-subtle, not the step. */
+  --green-950: oklch(0.235 0.050 152.0); /* Success ramp. Step 950, #082512. Use success-fg and success-subtle, not the step. */
+  --amber-50: oklch(0.975 0.018 70.0); /* Warning ramp. Step 50, #fff5ea. Use warning-fg and warning-subtle, not the step. */
+  --amber-100: oklch(0.945 0.040 70.0); /* Warning ramp. Step 100, #ffe9d0. Use warning-fg and warning-subtle, not the step. */
+  --amber-200: oklch(0.895 0.080 70.0); /* Warning ramp. Step 200, #ffd4a3. Use warning-fg and warning-subtle, not the step. */
+  --amber-300: oklch(0.820 0.144 70.0); /* Warning ramp. Step 300, #ffb24f. Use warning-fg and warning-subtle, not the step. */
+  --amber-400: oklch(0.720 0.156 70.0); /* Warning ramp. Step 400, #e19000. Use warning-fg and warning-subtle, not the step. */
+  --amber-500: oklch(0.636 0.138 70.0); /* Warning ramp. Step 500, #bf7900. Use warning-fg and warning-subtle, not the step. */
+  --amber-600: oklch(0.555 0.120 70.0); /* Warning ramp. Step 600, #9f6400. Use warning-fg and warning-subtle, not the step. */
+  --amber-700: oklch(0.475 0.103 70.0); /* Warning ramp. Step 700, #805000. Use warning-fg and warning-subtle, not the step. */
+  --amber-800: oklch(0.395 0.086 70.0); /* Warning ramp. Step 800, #633d00. Use warning-fg and warning-subtle, not the step. */
+  --amber-900: oklch(0.310 0.067 70.0); /* Warning ramp. Step 900, #452900. Use warning-fg and warning-subtle, not the step. */
+  --amber-950: oklch(0.235 0.050 70.0); /* Warning ramp. Step 950, #2d1901. Use warning-fg and warning-subtle, not the step. */
+  --violet-50: oklch(0.975 0.014 300.0); /* Syntax ramp. Step 50, #f8f5ff. Only for code highlighting and the code file type, through syntax-function and file-code. */
+  --violet-100: oklch(0.945 0.031 300.0); /* Syntax ramp. Step 100, #f0e9ff. Only for code highlighting and the code file type, through syntax-function and file-code. */
+  --violet-200: oklch(0.895 0.060 300.0); /* Syntax ramp. Step 200, #e2d4ff. Only for code highlighting and the code file type, through syntax-function and file-code. */
+  --violet-300: oklch(0.820 0.106 300.0); /* Syntax ramp. Step 300, #ceb5ff. Only for code highlighting and the code file type, through syntax-function and file-code. */
+  --violet-400: oklch(0.720 0.165 300.0); /* Syntax ramp. Step 400, #b58afb. Only for code highlighting and the code file type, through syntax-function and file-code. */
+  --violet-500: oklch(0.636 0.190 300.0); /* Syntax ramp. Step 500, #9e69eb. Only for code highlighting and the code file type, through syntax-function and file-code. */
+  --violet-600: oklch(0.555 0.185 300.0); /* Syntax ramp. Step 600, #8651cd. Only for code highlighting and the code file type, through syntax-function and file-code. */
+  --violet-700: oklch(0.475 0.165 300.0); /* Syntax ramp. Step 700, #6c3ea9. Only for code highlighting and the code file type, through syntax-function and file-code. */
+  --violet-800: oklch(0.395 0.135 300.0); /* Syntax ramp. Step 800, #532f82. Only for code highlighting and the code file type, through syntax-function and file-code. */
+  --violet-900: oklch(0.310 0.100 300.0); /* Syntax ramp. Step 900, #39215a. Only for code highlighting and the code file type, through syntax-function and file-code. */
+  --violet-950: oklch(0.235 0.065 300.0); /* Syntax ramp. Step 950, #231538. Only for code highlighting and the code file type, through syntax-function and file-code. */
+  --red-50: oklch(0.975 0.012 25.0); /* Danger ramp. Step 50, #fff4f3. Use danger, danger-fg and danger-subtle, not the step. */
+  --red-100: oklch(0.945 0.027 25.0); /* Danger ramp. Step 100, #ffe6e4. Use danger, danger-fg and danger-subtle, not the step. */
+  --red-200: oklch(0.895 0.055 25.0); /* Danger ramp. Step 200, #ffcfca. Use danger, danger-fg and danger-subtle, not the step. */
+  --red-300: oklch(0.820 0.101 25.0); /* Danger ramp. Step 300, #ffaba3. Use danger, danger-fg and danger-subtle, not the step. */
+  --red-400: oklch(0.720 0.174 25.0); /* Danger ramp. Step 400, #ff716b. Use danger, danger-fg and danger-subtle, not the step. */
+  --red-500: oklch(0.636 0.200 25.0); /* Danger ramp. Step 500, #eb4848. Use danger, danger-fg and danger-subtle, not the step. */
+  --red-600: oklch(0.555 0.195 25.0); /* Danger ramp. Step 600, #cc2d32. Use danger, danger-fg and danger-subtle, not the step. */
+  --red-700: oklch(0.475 0.170 25.0); /* Danger ramp. Step 700, #a72025. Use danger, danger-fg and danger-subtle, not the step. */
+  --red-800: oklch(0.395 0.140 25.0); /* Danger ramp. Step 800, #81181b. Use danger, danger-fg and danger-subtle, not the step. */
+  --red-900: oklch(0.310 0.100 25.0); /* Danger ramp. Step 900, #581414. Use danger, danger-fg and danger-subtle, not the step. */
+  --red-950: oklch(0.235 0.065 25.0); /* Danger ramp. Step 950, #370f0e. Use danger, danger-fg and danger-subtle, not the step. */
+  --gray-25: oklch(0.988 0.002 257.0); /* Neutral ramp, cool-biased toward the brand hue. Step 25, #fafbfc. Reach it through bg-*, fg-* and border roles. */
+  --gray-50: oklch(0.972 0.004 257.0); /* Neutral ramp, cool-biased toward the brand hue. Step 50, #f4f6f8. Reach it through bg-*, fg-* and border roles. */
+  --gray-100: oklch(0.950 0.005 257.0); /* Neutral ramp, cool-biased toward the brand hue. Step 100, #eceff2. Reach it through bg-*, fg-* and border roles. */
+  --gray-200: oklch(0.918 0.007 257.0); /* Neutral ramp, cool-biased toward the brand hue. Step 200, #e1e4e9. Reach it through bg-*, fg-* and border roles. */
+  --gray-300: oklch(0.855 0.009 257.0); /* Neutral ramp, cool-biased toward the brand hue. Step 300, #ccd0d5. Reach it through bg-*, fg-* and border roles. */
+  --gray-400: oklch(0.640 0.014 257.0); /* Neutral ramp, cool-biased toward the brand hue. Step 400, #878d95. Reach it through bg-*, fg-* and border roles. */
+  --gray-500: oklch(0.545 0.017 257.0); /* Neutral ramp, cool-biased toward the brand hue. Step 500, #6a717a. Reach it through bg-*, fg-* and border roles. */
+  --gray-600: oklch(0.455 0.018 257.0); /* Neutral ramp, cool-biased toward the brand hue. Step 600, #505761. Reach it through bg-*, fg-* and border roles. */
+  --gray-700: oklch(0.375 0.016 257.0); /* Neutral ramp, cool-biased toward the brand hue. Step 700, #3c424a. Reach it through bg-*, fg-* and border roles. */
+  --gray-800: oklch(0.300 0.012 257.0); /* Neutral ramp, cool-biased toward the brand hue. Step 800, #2a2e34. Reach it through bg-*, fg-* and border roles. */
+  --gray-850: oklch(0.255 0.010 257.0); /* Neutral ramp, cool-biased toward the brand hue. Step 850, #202328. Reach it through bg-*, fg-* and border roles. */
+  --gray-900: oklch(0.215 0.009 257.0); /* Neutral ramp, cool-biased toward the brand hue. Step 900, #171a1e. Reach it through bg-*, fg-* and border roles. */
+  --gray-950: oklch(0.180 0.008 257.0); /* Neutral ramp, cool-biased toward the brand hue. Step 950, #0f1215. Reach it through bg-*, fg-* and border roles. */
+  --white: oklch(1 0 0); /* Pure white. Light-theme canvas and on-action labels. */
+  --shadow-xs: 0 1px 2px rgba(15, 18, 21, 0.06); /* Secondary buttons, segmented-control thumb. The only shadow allowed on something that sits in the page. */
+  --shadow-composer: 0 1px 2px rgba(15, 18, 21, 0.04), 0 6px 20px -6px rgba(15, 18, 21, 0.10); /* The chat composer only. */
+  --shadow-md: 0 1px 2px rgba(15, 18, 21, 0.06), 0 8px 24px -6px rgba(15, 18, 21, 0.14); /* Menus, popovers, toasts, tooltips. */
+  --shadow-lg: 0 2px 4px rgba(15, 18, 21, 0.05), 0 24px 48px -12px rgba(15, 18, 21, 0.22); /* Dialogs and drawers. */
+}
+[data-theme="dark"] {
+  --bg: var(--gray-900);
+  --bg-subtle: var(--gray-950);
+  --bg-raised: var(--gray-850);
+  --bg-muted: var(--gray-800);
+  --bg-inverse: var(--gray-50);
+  --scrim: rgba(0, 0, 0, 0.62);
+  --fg: var(--gray-25);
+  --fg-muted: var(--gray-300);
+  --fg-subtle: var(--gray-400);
+  --fg-disabled: var(--gray-700);
+  --fg-inverse: var(--gray-950);
+  --border: var(--gray-800);
+  --border-control: var(--gray-500);
+  --action-subtle: var(--blue-950);
+  --action-subtle-fg: var(--blue-300);
+  --link: var(--blue-300);
+  --brand: var(--blue-400);
+  --brand-subtle: var(--blue-900);
+  --focus-ring: var(--blue-400);
+  --success-fg: var(--green-300);
+  --success-subtle: var(--green-950);
+  --warning-fg: var(--amber-300);
+  --warning-subtle: var(--amber-950);
+  --danger-fg: var(--red-300);
+  --danger-subtle: var(--red-950);
+  --info-fg: var(--blue-300);
+  --info-subtle: var(--blue-950);
+  --syntax-keyword: var(--blue-300);
+  --syntax-string: var(--green-300);
+  --syntax-number: var(--amber-300);
+  --syntax-property: var(--red-300);
+  --syntax-function: var(--violet-300);
+  --syntax-comment: var(--gray-400);
+  --chart-1: var(--blue-400);
+  --chart-2: var(--blue-200);
+  --chart-3: var(--gray-500);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-composer: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 6px 20px -6px rgba(0, 0, 0, 0.6);
+  --shadow-md: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 8px 24px -6px rgba(0, 0, 0, 0.65);
+  --shadow-lg: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 24px 48px -12px rgba(0, 0, 0, 0.75);
+}
+:root {
+  --space-2: 2px; /* Hairline gaps: icon to badge text, stacked label and value. */
+  --space-4: 4px; /* Tight gaps inside controls; gap between toolbar icon buttons. */
+  --space-6: 6px; /* Icon-to-label gap in buttons and menu items; label-to-input gap. */
+  --space-8: 8px; /* Default gap between related controls; menu padding; sidebar row horizontal padding. */
+  --space-12: 12px; /* Control horizontal padding (md); list item spacing; toast padding. */
+  --space-16: 16px; /* Panel and card padding (dense); gap between form fields; page gutter on phones. */
+  --space-20: 20px; /* Panel padding (default); dialog body padding. */
+  --space-24: 24px; /* Gap between groups; dialog padding; app page gutter. */
+  --space-32: 32px; /* Gap between sections inside a product page. */
+  --space-48: 48px; /* Website: gap between headline block and its content. */
+  --space-64: 64px; /* Website: section padding on phones. */
+  --space-96: 96px; /* Website: section padding on tablet. */
+  --space-128: 128px; /* Website: section padding on desktop. Rhythm comes from these steps, not from borders. */
+  --radius-xs: 4px; /* Checkboxes, inline code, kbd, tiny chips. */
+  --radius-sm: 6px; /* Small nested things: segmented-control thumbs (inside radius-md, 2px padding), sidebar rows, small buttons, tooltips. */
+  --radius-md: 8px; /* Product buttons, inputs, icon buttons, menu items. Concentric rule: outer radius = inner radius + padding. */
+  --radius-lg: 12px; /* Panels, menus, popovers, toasts, code blocks (8 inner + 4 padding). */
+  --radius-xl: 16px; /* Dialogs and the composer. */
+  --radius-2xl: 24px; /* Website media frames (product captures) and large marketing panels. */
+  --radius-full: 9999px; /* Website CTA buttons (shape=pill), the send button, badges, avatars, switches. */
+  --fluid-display-xl: clamp(44px, 7vw, 72px); /* Font size for type-display-xl on the website: 44px on phones to 72px on desktop. */
+  --fluid-display: clamp(38px, 5.5vw, 56px); /* Font size for type-display on the website. */
+  --fluid-headline: clamp(30px, 4vw, 40px); /* Font size for type-headline on the website. */
+  --control-sm: 28px; /* Compact buttons and icon buttons in toolbars, message actions and table rows. Hit area extended to 40px with a pseudo-element. Becomes 36px on touch devices. */
+  --control-md: 36px; /* Default product control height: buttons, inputs, segmented controls, menu triggers. Becomes 44px on touch devices. */
+  --control-lg: 44px; /* Website CTAs, auth forms. The touch minimum. Becomes 48px on touch devices. */
+  --icon-sm: 14px; /* Icons inside badges and 12-13px text. */
+  --icon-md: 16px; /* Default icon size beside 14px text. */
+  --icon-lg: 20px; /* Empty states, website feature rows, mobile tab bar. */
+  --sidebar-width: 260px; /* Platform sidebar, desktop. Collapses to a drawer below 768px. */
+  --header-height: 48px; /* Platform header bar. */
+  --reading-width: 720px; /* Chat column and in-app docs. The composer shares this width. */
+  --container-width: 1200px; /* Website content container, centred, with a 24px gutter (16px on phones). */
+  --duration-press: 120ms; /* Button press scale and release. */
+  --duration-fast: 150ms; /* Hover and color changes, toggles, tooltip fade. */
+  --duration-base: 200ms; /* Menus, popovers, toasts entering, accordion. */
+  --duration-slow: 280ms; /* Dialogs, drawers, sidebar collapse. The UI ceiling: nothing in the product runs longer. */
+  --duration-page: 600ms; /* Website only: the one orchestrated hero entrance per page. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1); /* Default for anything entering or responding: menus, toasts, press, hover. */
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1); /* Something already on screen moving to a new place: segmented thumb, reordering. */
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1); /* Sheets, drawers, sidebar collapse, mobile panels (iOS curve). */
+  --layer-sticky: 10; /* Sticky headers, the composer. */
+  --layer-overlay: 100; /* Dialogs, sheets and their scrims. A dialog opened from a dialog uses the same layer and wins by DOM order (portal it last). */
+  --layer-dropdown: 110; /* Menus, popovers, selects, comboboxes. Above overlays, so a menu inside a dialog is never hidden under its scrim. */
+  --layer-tour: 115; /* Walkthrough coach marks and their spotlight. */
+  --layer-toast: 120; /* Toasts, above dialogs. */
+  --layer-tooltip: 130; /* Tooltips, above everything. */
+  --font-sans: Geist, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --type-ui-caption: 500 12px/16px var(--font-sans); /* Timestamps, sidebar group labels, badge text, footnotes. 12px is the floor: nothing in any Intra surface is set smaller. */
+  --type-ui-label: 500 13px/18px var(--font-sans); /* Form labels, table headers, menu section labels, segmented-control options. */
+  --type-ui-body-sm: 400 13px/20px var(--font-sans); /* Dense tables, secondary lines under a title, helper text under inputs. */
+  --type-ui-body: 400 14px/20px var(--font-sans); /* The platform default: inputs, menu items, sidebar rows, settings text, toasts. */
+  --type-ui-strong: 500 14px/20px var(--font-sans); /* Button labels, the active nav item, emphasised cells. Emphasis is weight 500, never 700. */
+  --type-ui-body-lg: 400 16px/24px var(--font-sans); /* Inputs on touch devices and auth screens (16px stops iOS zooming), and the website's small UI text. */
+  --type-ui-strong-lg: 500 15px/20px var(--font-sans); /* Labels of large (44px) buttons: website CTAs, auth screens. */
+  --type-prose: 400 15px/24px var(--font-sans); /* Long reading inside the product: chat messages, agent output, docs. Hold the measure at 60-72ch. */
+  --type-title-sm: 600 15px/22px var(--font-sans); /* Dialog titles, panel and card titles, toast titles. */
+  --type-title: 600 18px/26px var(--font-sans); /* Section headings inside a product page. */
+  --type-title-lg: 600 22px/28px var(--font-sans); /* The page title. One per view. */
+  --type-display-xl: 600 72px/72px var(--font-sans); /* Website hero headline only, once per page. Fluid: clamp(44px, 7vw, 72px), line-height 1.0, text-wrap balance. */
+  --type-display: 600 56px/60px var(--font-sans); /* Hero on secondary pages (pricing, security). Fluid: clamp(38px, 5.5vw, 56px). */
+  --type-headline: 600 40px/46px var(--font-sans); /* Website section headings. Fluid: clamp(30px, 4vw, 40px). No eyebrow label above it. */
+  --type-headline-sm: 600 28px/34px var(--font-sans); /* Sub-section headings, pricing plan names, CTA band headline. */
+  --type-lead: 400 19px/30px var(--font-sans); /* The one paragraph under a hero or section headline. fg-muted, max 56ch. */
+  --type-body-lg: 400 17px/28px var(--font-sans); /* Website running text and feature descriptions. Max 68ch. */
+  --type-code: 400 13px/20px var(--font-mono); /* Code blocks, YAML, API paths, the 2FA code input. Mono is for machine text only: never for labels, eyebrows or numbers in UI. */
+  --type-code-sm: 400 12px/18px var(--font-mono); /* Inline IDs, keyboard shortcuts, file extensions inside dense rows. */
+}
+.type-ui-caption {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+}
+.type-ui-label {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.type-ui-body-sm {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.type-ui-body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.type-ui-strong {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.type-ui-body-lg {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.type-ui-strong-lg {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.type-prose {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 24px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.type-title-sm {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.type-title {
+  font-family: var(--font-sans);
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.type-title-lg {
+  font-family: var(--font-sans);
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.type-display-xl {
+  font-family: var(--font-sans);
+  font-size: 72px;
+  line-height: 72px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+.type-display {
+  font-family: var(--font-sans);
+  font-size: 56px;
+  line-height: 60px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+.type-headline {
+  font-family: var(--font-sans);
+  font-size: 40px;
+  line-height: 46px;
+  font-weight: 600;
+  letter-spacing: -0.028em;
+}
+.type-headline-sm {
+  font-family: var(--font-sans);
+  font-size: 28px;
+  line-height: 34px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.type-lead {
+  font-family: var(--font-sans);
+  font-size: 19px;
+  line-height: 30px;
+  font-weight: 400;
+  letter-spacing: -0.005em;
+}
+.type-body-lg {
+  font-family: var(--font-sans);
+  font-size: 17px;
+  line-height: 28px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.type-code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.type-code-sm {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+@font-face {
+  font-family: "Geist";
+  src: url("fonts/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist";
+  src: url("fonts/Geist-Italic-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("fonts/GeistMono-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}

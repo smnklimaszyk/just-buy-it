@@ -3,10 +3,10 @@ import {
   collapseWhitespace,
   maskContactData,
   removeHiddenCharacters,
-  segmentInfo,
+  MAX_PRODUCT_BLOCK_BYTES,
+  renderProductBlock,
   type CodeSignal,
-  type ListingFlag,
-  type Segment,
+  type ProductBlockFields,
   type SellerAccountType,
 } from "@ebay-sniper/domain";
 import { MAX_USER_MESSAGE_BYTES } from "./screening-config.v1.js";
@@ -15,7 +15,6 @@ import { MAX_USER_MESSAGE_BYTES } from "./screening-config.v1.js";
 // getItem and the scan results. There is no field for the item ID, any URL or the seller's
 // identity, so none of them can reach the request.
 export type ScreeningListing = {
-  segment: Segment;
   // getItem title.
   title: string;
   condition: string | null;
@@ -33,14 +32,14 @@ export type ScreeningListing = {
   imageCount: number;
   // The description as cleanDescription() returns it (listing_content.description_text).
   descriptionText: string | null;
-  ruleFlags: ListingFlag[];
+  // The candidate's flags as the matcher wrote them, `warn:<word>` included.
+  ruleFlags: string[];
   codeSignals: CodeSignal[];
 };
 
-// The section 5.1 fields, as the model reads them.
+// The section 5.1 fields without segment and segment_description, as the model reads them. The
+// buyer's side is the <product> element (spec 4.2).
 export type ListingFields = {
-  segment: Segment;
-  segment_description: string;
   title: string;
   condition: string | null;
   condition_description: string | null;
@@ -96,8 +95,6 @@ export function toListingFields(listing: ScreeningListing, now: Date): ListingFi
   // With shipping unknown the item price alone is compared, as in the price rules.
   const basisCents = shipping === null ? listing.priceCents : listing.priceCents + shipping;
   return {
-    segment: listing.segment,
-    segment_description: segmentInfo(listing.segment).description,
     title: clean(listing.title),
     condition: listing.condition === null ? null : clean(listing.condition),
     condition_description:
@@ -133,10 +130,11 @@ export function toListingFields(listing: ScreeningListing, now: Date): ListingFi
 
 const byteLength = (text: string): number => Buffer.byteLength(text, "utf8");
 
-// "<" is written as its JSON escape, so seller text (decoded entities included) can never close or
-// open the listing tags. The JSON still parses to the same text.
-function render(fields: ListingFields): string {
-  return `<listing>\n${JSON.stringify(fields, null, 2).replaceAll("<", "\\u003c")}\n</listing>`;
+// Spec 4.2: the buyer's <product> element first, then the seller's <listing> element. "<" is
+// written as its JSON escape in both, so seller text (decoded entities included) can never close
+// or open either element. The JSON still parses to the same text.
+function render(productBlock: string, fields: ListingFields): string {
+  return `${productBlock}\n<listing>\n${JSON.stringify(fields, null, 2).replaceAll("<", "\\u003c")}\n</listing>`;
 }
 
 const fits = (message: string): boolean => byteLength(message) <= MAX_USER_MESSAGE_BYTES;
@@ -153,14 +151,18 @@ export type RenderedMessage = { userMessage: string; fields: ListingFields; inpu
 
 // The message grows with every kept unit (code point or item specific), so the most that fits
 // below `total` is found by bisection. null when not even 0 kept fits.
-function longestFitting(total: number, withKept: (kept: number) => ListingFields): RenderedMessage | null {
+function longestFitting(
+  productBlock: string,
+  total: number,
+  withKept: (kept: number) => ListingFields,
+): RenderedMessage | null {
   let low = 0;
   let high = total - 1;
   let best: RenderedMessage | null = null;
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
     const fields = withKept(mid);
-    const userMessage = render(fields);
+    const userMessage = render(productBlock, fields);
     if (fits(userMessage)) {
       best = { userMessage, fields, inputCapped: true };
       low = mid + 1;
@@ -171,29 +173,33 @@ function longestFitting(total: number, withKept: (kept: number) => ListingFields
   return best;
 }
 
-// Section 5.1 byte cap: over 12,000 bytes, the description is cut further from the middle, then
-// item specifics are dropped from the end, until the message fits. Every call's input cost is
-// bounded by the cap (section 5.5).
-export function renderUserMessage(fields: ListingFields): RenderedMessage {
-  const full = render(fields);
+// The byte cap of the whole message (spec 4.2): over it, the description is cut further from the
+// middle, then item specifics are dropped from the end, until the message fits. Every call's
+// input cost is bounded by the cap (section 5.5).
+export function renderUserMessage(product: ProductBlockFields, fields: ListingFields): RenderedMessage {
+  const productBlock = renderProductBlock(product);
+  // The form refuses such a product (spec 4.2); one written another way is never sent, because
+  // the reserved worst case would not cover it.
+  if (byteLength(productBlock) > MAX_PRODUCT_BLOCK_BYTES) throw new Error("the product element is over its byte cap");
+  const full = render(productBlock, fields);
   if (fits(full)) return { userMessage: full, fields, inputCapped: false };
   let rest = fields;
   if (fields.description !== null) {
     const chars = [...fields.description];
     const withKept = (kept: number): ListingFields => ({ ...fields, description: cutMiddle(chars, kept) });
-    const cut = longestFitting(chars.length, withKept);
+    const cut = longestFitting(productBlock, chars.length, withKept);
     if (cut !== null) return cut;
     rest = withKept(0);
   }
   const specifics = rest.item_specifics;
-  const dropped = longestFitting(specifics.length, (kept) => ({ ...rest, item_specifics: specifics.slice(0, kept) }));
+  const dropped = longestFitting(productBlock, specifics.length, (kept) => ({ ...rest, item_specifics: specifics.slice(0, kept) }));
   if (dropped !== null) return dropped;
   // Unreachable with eBay's title length: the other fields are cut to size in toListingFields.
   throw new Error("listing does not fit the input cap");
 }
 
-export function buildScreeningRequest(listing: ScreeningListing, now: Date): ScreeningRequest {
-  const { userMessage, fields, inputCapped } = renderUserMessage(toListingFields(listing, now));
+export function buildScreeningRequest(product: ProductBlockFields, listing: ScreeningListing, now: Date): ScreeningRequest {
+  const { userMessage, fields, inputCapped } = renderUserMessage(product, toListingFields(listing, now));
   const inputFlags: InputFlag[] = [];
   // Cut by cleanDescription() or by the byte cap.
   if (fields.description?.includes(TRUNCATION_MARK)) inputFlags.push("description_truncated");

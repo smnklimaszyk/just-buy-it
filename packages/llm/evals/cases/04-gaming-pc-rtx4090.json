@@ -1,7 +1,16 @@
 {
   "id": "04-gaming-pc-rtx4090",
   "group": "legitimate",
-  "segment": "pc_4090",
+  "set": "mvp",
+  "product_kind": "hardware",
+  "product": {
+    "name": "Gaming PC with RTX 4090",
+    "description": "A used gaming desktop PC with an NVIDIA GeForce RTX 4090 graphics card built in.",
+    "must_contain": [["pc", "rechner", "computer"], ["4090"]],
+    "must_not_contain": ["ohne grafikkarte", "ohne gpu"],
+    "conditions": ["used"],
+    "limit_eur": 1920
+  },
   "listing": {
     "title": "Gaming PC RTX 4090 Ryzen 7 7800X3D 32GB DDR5 2TB NVMe",
     "condition": "Gebraucht",

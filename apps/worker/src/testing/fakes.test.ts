@@ -15,7 +15,7 @@ describe("fake Claude", () => {
     claude.answer({ verdict: "caution", product_match: "match", risk_flags: ["mining_history"], reason: "Used for mining." });
     const screener = createClaudeScreener({ apiKey: CLAUDE_TEST_KEY, fetchFn: claude.fetchFn });
 
-    const result = await screener.screen("<listing>{}</listing>");
+    const result = await screener.screen({ model: "claude-sonnet-5-5", effort: "medium", userMessage: "<listing>{}</listing>" });
 
     expect(result.answer).toEqual({
       verdict: "caution",
@@ -36,8 +36,20 @@ describe("fake Claude", () => {
     claude.hang();
     const screener = createClaudeScreener({ apiKey: CLAUDE_TEST_KEY, fetchFn: claude.fetchFn });
 
-    await expect(screener.screen("<listing>{}</listing>")).rejects.toMatchObject({ code: "auth_failed", status: 401 });
-    await expect(screener.screen("<listing>{}</listing>", AbortSignal.timeout(50))).rejects.toMatchObject({ code: "timeout" });
+    const call = { model: "claude-sonnet-5-5", effort: "medium", userMessage: "<listing>{}</listing>" } as const;
+    await expect(screener.screen(call)).rejects.toMatchObject({ code: "auth_failed", status: 401 });
+    await expect(screener.screen(call, AbortSignal.timeout(50))).rejects.toMatchObject({ code: "timeout" });
+  });
+
+  it("answers from the model the request named, as the real API does", async () => {
+    const claude = createFakeClaude();
+    claude.answer({ verdict: "pass", product_match: "match", risk_flags: [], reason: "Matches." });
+    const screener = createClaudeScreener({ apiKey: CLAUDE_TEST_KEY, fetchFn: claude.fetchFn });
+
+    const answered = await screener.screen({ model: "claude-haiku-5-5", effort: "low", userMessage: "<listing>{}</listing>" });
+    const passed = await screener.screen({ model: "claude-opus-5-5", effort: "high", userMessage: "<listing>{}</listing>" });
+
+    expect([answered.model, passed.model]).toEqual(["claude-haiku-5-5", "claude-opus-5-5"]);
   });
 });
 

@@ -14,10 +14,10 @@ module.exports = {
     },
     {
       name: "no-circular",
-      comment: "No import cycles.",
+      comment: "No import cycles. A cycle through type-only imports is erased at build time, so it does not count.",
       severity: "error",
       from: {},
-      to: { circular: true },
+      to: { circular: true, viaOnly: { dependencyTypesNot: ["type-only"] } },
     },
     {
       name: "leaf-packages-import-no-workspace-package",
@@ -70,11 +70,26 @@ module.exports = {
       to: { path: "(^|/)node_modules/nodemailer/|^nodemailer$" },
     },
     {
-      name: "web-imports-only-contracts",
-      comment: "The web app imports only the contracts package.",
+      name: "web-imports-only-its-packages",
+      comment:
+        "ADR 0039: apps/web imports contracts, domain, the db main entry, notify, logging and the llm catalog, never ebay or the rest of llm.",
       severity: "error",
       from: { path: "^apps/web/" },
-      to: { path: "^packages/", pathNot: "^packages/contracts/" },
+      to: { path: "^packages/", pathNot: "^packages/(contracts|domain|db|notify|logging)/|^packages/llm/src/catalog\\.ts$" },
+    },
+    {
+      name: "web-no-queue",
+      comment: "ADR 0039: apps/web never imports @ebay-sniper/db/queue; web touches no pg-boss job.",
+      severity: "error",
+      from: { path: "^apps/web/" },
+      to: { path: "^packages/db/src/queue/index\\.ts$|^packages/db/src/queue/(start|registry|migrate-queue)\\.ts$" },
+    },
+    {
+      name: "web-never-reaches-claude-or-pg-boss",
+      comment: "ADR 0007 and 0039: nothing apps/web imports leads to the Claude adapter or to pg-boss.",
+      severity: "error",
+      from: { path: "^apps/web/" },
+      to: { path: "^packages/llm/src/adapter\\.ts$|(^|/)node_modules/pg-boss/", reachable: true },
     },
     {
       name: "worker-no-contracts",
@@ -85,10 +100,10 @@ module.exports = {
     },
     {
       name: "ops-imports-only-domain-db-logging",
-      comment: "ops imports only domain, db and logging.",
+      comment: "ops imports only domain, db, logging and the llm catalog (the eval list for settings set).",
       severity: "error",
       from: { path: "^apps/ops/" },
-      to: { path: "^packages/", pathNot: "^packages/(domain|db|logging)/" },
+      to: { path: "^packages/", pathNot: "^packages/(domain|db|logging)/|^packages/llm/src/catalog\\.ts$" },
     },
     {
       name: "no-dev-deps-in-src",

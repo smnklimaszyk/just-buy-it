@@ -42,6 +42,8 @@ export const itemSummarySchema = z.object({
   itemLocation: itemLocation.optional(),
   seller: seller.optional(),
   itemCreationDate: z.iso.datetime().optional(),
+  // Kept when the item is relisted; the market value weighs a listing by it (spec 6.2).
+  itemOriginDate: z.iso.datetime().optional(),
   itemEndDate: z.iso.datetime().optional(),
   itemWebUrl: z.string().optional(),
   image: z.object({ imageUrl: z.string().optional() }).optional(),
@@ -78,16 +80,25 @@ export const itemSchema = z.object({
   itemEndDate: z.iso.datetime().optional(),
 });
 
+// One category of the CATEGORY_REFINEMENTS field group. refinementHref is not declared.
+export const categoryCountSchema = z.object({
+  categoryId: z.string(),
+  categoryName: z.string().optional(),
+  matchCount: z.number().int().optional(),
+});
+
 export const searchPageSchema = z.object({
   total: z.number().int(),
   limit: z.number().int(),
   offset: z.number().int(),
   next: z.string().optional(),
   warnings: z.array(errorDetailSchema).optional(),
+  refinement: z.object({ categoryDistributions: z.array(categoryCountSchema).optional() }).optional(),
   // Each item is parsed on its own, so one bad item does not fail the page.
   itemSummaries: z.array(z.unknown()).optional(),
 });
 
+export type CategoryCount = z.infer<typeof categoryCountSchema>;
 export type EbayErrorDetail = z.infer<typeof errorDetailSchema>;
 export type ItemSummary = z.infer<typeof itemSummarySchema>;
 export type Item = z.infer<typeof itemSchema>;

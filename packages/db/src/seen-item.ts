@@ -1,19 +1,21 @@
-import type { FeedId, SeenOutcome, Segment } from "@ebay-sniper/domain";
 import type { Queryable } from "./pool.js";
 
+// v2 writes the search id (poll) or the product key (sweep) into feed_id and the matched
+// product's key, or NULL, into segment. Rows written before v2 hold a feed id, a segment and
+// outcomes v2 does not know, so all three read as plain codes.
 export type SeenItemSighting = {
   itemKey: string;
   keyVersion: number;
-  feedId: FeedId;
-  segment: Segment | null;
-  outcome: SeenOutcome;
+  feedId: string;
+  segment: string | null;
+  outcome: string;
   seenAt: Date;
 };
 
 export type SeenItemState = {
-  feedId: FeedId;
-  segment: Segment | null;
-  outcome: SeenOutcome;
+  feedId: string;
+  segment: string | null;
+  outcome: string;
   firstSeenAt: Date;
   lastSeenAt: Date;
   candidateAt: Date | null;
@@ -24,9 +26,9 @@ export type SeenItemState = {
 export async function getSeenItems(db: Queryable, itemKeys: readonly string[]): Promise<Map<string, SeenItemState>> {
   const result = await db.query<{
     item_key: string;
-    feed_id: FeedId;
-    segment: Segment | null;
-    outcome: SeenOutcome;
+    feed_id: string;
+    segment: string | null;
+    outcome: string;
     first_seen_at: Date;
     last_seen_at: Date;
     candidate_at: Date | null;
@@ -63,15 +65,6 @@ export async function claimCandidate(db: Queryable, itemKey: string, at: Date): 
     [itemKey, at],
   );
   return result.rowCount === 1;
-}
-
-// A feed without any seen_item row polls a baseline next (section 3.2); sweeps wait for one.
-export async function feedHasSeenItems(db: Queryable, feedId: FeedId): Promise<boolean> {
-  const result = await db.query<{ seen: boolean }>(
-    "SELECT EXISTS (SELECT 1 FROM app.seen_item WHERE feed_id = $1) AS seen",
-    [feedId],
-  );
-  return result.rows[0]?.seen === true;
 }
 
 // One statement for a page of sightings. A later sighting moves last_seen_at and the outcome; an

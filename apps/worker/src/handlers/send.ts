@@ -12,6 +12,7 @@ import {
   type DbPool,
   type DeliveryForSend,
   type HoldReason,
+  type Queryable,
 } from "@ebay-sniper/db";
 import type { JobHandler } from "@ebay-sniper/db/queue";
 import { checkEmailRate, startOfBerlinDay, type Clock } from "@ebay-sniper/domain";
@@ -38,6 +39,22 @@ const NOT_CONFIGURED_RECHECK_MS = 5 * 60_000;
 function isDue(delivery: DeliveryForSend, now: Date): boolean {
   if (delivery.status === "pending") return delivery.nextAttemptAt <= now;
   return delivery.status === "sending" && delivery.leaseUntil !== null && delivery.leaseUntil < now;
+}
+
+// Spec 2.1 and 9: the people of the alert's product who are active now, read when the email goes
+// out, without the delivery's own recipient (ALERT_TO). A key with no product (a segment alert
+// made before v2) has nobody.
+async function productPeople(db: Queryable, delivery: DeliveryForSend): Promise<string[]> {
+  const result = await db.query<{ email: string }>(
+    `SELECT u.email::text AS email
+       FROM app.alert a
+       JOIN app.product p ON p.key = a.segment
+       JOIN auth.app_user u ON u.id = ANY (p.alert_recipient_ids)
+      WHERE a.id = $1 AND u.status = 'active' AND u.email <> $2::citext
+      ORDER BY u.email`,
+    [delivery.alertId, delivery.recipient],
+  );
+  return result.rows.map((row) => row.email);
 }
 
 // A send gate failed (section 2.4): the delivery waits with the reason; attempt is unchanged.
@@ -91,12 +108,14 @@ export function createSendHandler(deps: SendDeps): JobHandler<"send"> {
     }
     const attempt = await claimDelivery(deps.pool, deliveryId, now);
     if (attempt === null) return;
+    const bcc = await productPeople(deps.pool, delivery);
     let result: SmtpSendResult;
     try {
       result = await mailer.send(
         {
           deliveryId,
           to: delivery.recipient,
+          bcc,
           subject: message.subject,
           text: message.textBody,
           html: message.htmlBody,

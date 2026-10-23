@@ -1,6 +1,6 @@
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
-import { checkDashboardRole, checkWorkerRole, RoleCheckError, setRolePassword } from "./app-role.js";
+import { checkDashboardRole, checkWebRole, checkWorkerRole, RoleCheckError, setRolePassword } from "./app-role.js";
 import { migrateQueue } from "./queue/migrate-queue.js";
 import { withRoleLock } from "./role-lock.js";
 import { createTestDatabase, type TestDatabase } from "./testing/database.js";
@@ -10,6 +10,7 @@ import { createTestDatabase, type TestDatabase } from "./testing/database.js";
 
 const WORKER_PASSWORD = "1111111111111111111111111111111111111111111111111111111111111111";
 const DASHBOARD_PASSWORD = "2222222222222222222222222222222222222222222222222222222222222222";
+const WEB_PASSWORD = "3333333333333333333333333333333333333333333333333333333333333333";
 
 let database: TestDatabase;
 
@@ -40,7 +41,7 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
 // "<role> statement_timeout <value>" sets the role's timeout in this database, under the role
 // lock; anything else runs as given.
 async function alter(statement: string): Promise<void> {
-  const timeout = /^(worker|dashboard) statement_timeout (\w+)$/.exec(statement);
+  const timeout = /^(worker|dashboard|web) statement_timeout (\w+)$/.exec(statement);
   if (timeout === null) {
     await database.pool.query(statement);
     return;
@@ -76,6 +77,7 @@ describe("setRolePassword", () => {
   it.each([
     ["worker", WORKER_PASSWORD],
     ["dashboard", DASHBOARD_PASSWORD],
+    ["web", WEB_PASSWORD],
   ] as const)("gives %s LOGIN and a SCRAM verifier, so a session with the password works", async (role, password) => {
     await setRolePassword(database.url, role, password);
 
@@ -111,15 +113,63 @@ describe("role defaults (migration 0005)", () => {
   });
 });
 
+describe("checkWebRole", () => {
+  it("passes as web: reads products and people, and the auth_event delete and deletion_event read are refused", async () => {
+    await setRolePassword(database.url, "web", WEB_PASSWORD);
+
+    await checkWebRole(roleUrl("web", WEB_PASSWORD));
+
+    const client = await connectAs("web", WEB_PASSWORD);
+    try {
+      const result = await client.query<{ timeout: string; read_only: string }>(
+        "SELECT current_setting('statement_timeout') AS timeout, current_setting('default_transaction_read_only') AS read_only",
+      );
+      expect(result.rows[0]).toEqual({ timeout: "2s", read_only: "off" });
+    } finally {
+      await client.end();
+    }
+  });
+
+  it.each([
+    ["connect: 28P01", null, null],
+    ["select app.product: 42501", "REVOKE SELECT ON app.product FROM web", "GRANT SELECT ON app.product TO web"],
+    ["select auth.app_user: 42501", "REVOKE SELECT ON auth.app_user FROM web", "GRANT SELECT ON auth.app_user TO web"],
+    [
+      "delete auth.auth_event: expected 42501, got success",
+      "GRANT DELETE ON auth.auth_event TO web",
+      "REVOKE DELETE ON auth.auth_event FROM web",
+    ],
+    [
+      "select app.deletion_event: expected 42501, got success",
+      "GRANT SELECT ON app.deletion_event TO web",
+      "REVOKE SELECT ON app.deletion_event FROM web",
+    ],
+    ["statement_timeout: 5s", "web statement_timeout 5s", "web statement_timeout 2s"],
+  ])("fails at %s, naming the step and never the password", async (expected, breakIt, restore) => {
+    await setRolePassword(database.url, "web", WEB_PASSWORD);
+    const password = breakIt === null ? "f".repeat(64) : WEB_PASSWORD;
+    if (breakIt !== null) await alter(breakIt);
+    try {
+      const error = await rejection(checkWebRole(roleUrl("web", password)));
+
+      expect(error).toBeInstanceOf(RoleCheckError);
+      expect((error as Error).message).toBe(`web role check failed at ${expected}`);
+      expect(JSON.stringify(error)).not.toContain(password);
+    } finally {
+      if (restore !== null) await alter(restore);
+    }
+  });
+});
+
 describe("checkDashboardRole", () => {
-  it("passes as dashboard: every dashboard query runs, and the INSERT and the deletion_event read are refused", async () => {
+  it("passes as dashboard: every table Release 0's dashboard reads is read, and the INSERT and the deletion_event read are refused", async () => {
     await setRolePassword(database.url, "dashboard", DASHBOARD_PASSWORD);
 
     await checkDashboardRole(roleUrl("dashboard", DASHBOARD_PASSWORD));
   });
 
   it.each([
-    ["query alerts: 42501", "REVOKE SELECT ON app.alert FROM dashboard", "GRANT SELECT ON app.alert TO dashboard"],
+    ["read app.alert: 42501", "REVOKE SELECT ON app.alert FROM dashboard", "GRANT SELECT ON app.alert TO dashboard"],
     [
       "insert app.feed: expected 42501, got success",
       "GRANT INSERT ON app.feed TO dashboard",

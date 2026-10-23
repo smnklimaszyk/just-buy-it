@@ -1,4 +1,5 @@
 import type { Clock } from "@ebay-sniper/domain";
+import { MARKET_PURGE_STEPS } from "./market-store.js";
 import type { Queryable } from "./pool.js";
 
 // Section 7.3: the purge (every 15 min), run by the worker as role worker. It touches only the
@@ -32,7 +33,14 @@ const deleteWhere = (table: string, condition: string) =>
 const updateWhere = (table: string, set: string, condition: string) =>
   `UPDATE ${table} SET ${set} WHERE ctid = ANY (ARRAY(SELECT ctid FROM ${table} WHERE ${condition} LIMIT $1))`;
 
-export async function runPurge(db: Queryable, clock: Clock, options: { batchSize?: number } = {}): Promise<PurgeCounts> {
+export type PurgeOptions = {
+  batchSize?: number;
+  // Called for a v2 step that failed; the purge goes on with the next step.
+  onStepError?: (step: string, error: unknown) => void;
+};
+
+export async function runPurge(db: Queryable, clock: Clock, options: PurgeOptions = {}): Promise<PurgeCounts> {
+  let failed = false;
   const batchSize = options.batchSize ?? PURGE_BATCH_SIZE;
   const startedAt = clock.now();
   const now = startedAt;
@@ -99,6 +107,35 @@ export async function runPurge(db: Queryable, clock: Clock, options: { batchSize
       deleteWhere("app.llm_usage_daily", "day_berlin < (($2::timestamptz AT TIME ZONE 'Europe/Berlin') - interval '1 year')::date"),
       [now],
     );
+
+    // 8. The v2 tables, after the eBay content steps (spec 2.10). Each step stands alone: a failed
+    // one is reported and the next one still runs.
+    const isolated = async (name: string, statement: string, params: unknown[]) => {
+      try {
+        await step(name, statement, params);
+      } catch (error) {
+        failed = true;
+        options.onStepError?.(name, error);
+      }
+    };
+    for (const market of MARKET_PURGE_STEPS) await isolated(market.name, market.statement, market.params(now));
+    await isolated(
+      "llm_usage_product_daily",
+      deleteWhere(
+        "app.llm_usage_product_daily",
+        "day_berlin < (($2::timestamptz AT TIME ZONE 'Europe/Berlin') - interval '30 days')::date",
+      ),
+      [now],
+    );
+    await isolated("login_attempt", deleteWhere("auth.login_attempt", "created_at <= $2"), [before(DAY_MS)]);
+    await isolated(
+      "session",
+      deleteWhere("auth.session", "ended_at <= $2 OR (ended_at IS NULL AND expires_at <= $2)"),
+      [before(30 * DAY_MS)],
+    );
+    await isolated("device", deleteWhere("auth.device", "revoked_at <= $2 OR last_used_at <= $3"), [before(30 * DAY_MS), before(180 * DAY_MS)]);
+    await isolated("rate_counter", deleteWhere("auth.rate_counter", "window_start <= $2"), [before(2 * DAY_MS)]);
+    await isolated("auth_event", deleteWhere("auth.auth_event", "at <= $2"), [before(90 * DAY_MS)]);
   } catch (error) {
     // The run is recorded with the counts so far; the error that broke it is the one thrown.
     await writePurgeRun(db, startedAt, clock.now(), "error", counts).catch(() => undefined);
@@ -106,7 +143,7 @@ export async function runPurge(db: Queryable, clock: Clock, options: { batchSize
   }
 
   // 7. The run with its counts (numbers only).
-  await writePurgeRun(db, startedAt, clock.now(), "ok", counts);
+  await writePurgeRun(db, startedAt, clock.now(), failed ? "error" : "ok", counts);
   return counts;
 }
 

@@ -1,6 +1,6 @@
 import pino, { type Logger, type LoggerOptions } from "pino";
 
-const SECRET_HEADERS = [".authorization", ".cookie", '["x-ebay-signature"]', '["x-api-key"]'];
+const SECRET_HEADERS = [".authorization", ".cookie", '["set-cookie"]', '["x-csrf-token"]', '["x-ebay-signature"]', '["x-api-key"]'];
 const SECRET_FIELDS = [
   "token",
   "secret",
@@ -11,6 +11,11 @@ const SECRET_FIELDS = [
   "smtpPassword",
   "SMTP_PASSWORD",
   "ANTHROPIC_API_KEY",
+  // Sign-in (spec 7.9): the code, the session and device cookies, and the web service's keys.
+  "code",
+  "cookie",
+  "AUTH_KEY",
+  "LOGIN_SMTP_PASSWORD",
 ];
 // User identifiers in an eBay notification body (ADR 0013).
 const USER_FIELDS = ["data.username", "data.userId", "data.eiasToken"];

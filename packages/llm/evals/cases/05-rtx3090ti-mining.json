@@ -1,7 +1,16 @@
 {
   "id": "05-rtx3090ti-mining",
   "group": "legitimate",
-  "segment": "gpu_3090ti",
+  "set": "mvp",
+  "product_kind": "hardware",
+  "product": {
+    "name": "RTX 3090 Ti",
+    "description": "A used NVIDIA GeForce RTX 3090 Ti graphics card with 24 GB: the working card itself.",
+    "must_contain": [["3090 ti"]],
+    "must_not_contain": ["defekt"],
+    "conditions": ["used"],
+    "limit_eur": 600
+  },
   "listing": {
     "title": "ASUS TUF RTX 3090 Ti 24GB Gaming OC",
     "condition": "Gebraucht",
@@ -22,7 +31,7 @@
     ],
     "image_count": 6,
     "description": "Ehrlich gesagt: Die Karte lief etwa ein Jahr im Mining, mit reduziertem Powerlimit und offenem Rahmen bei guter Kühlung. Danach habe ich Wärmeleitpaste und Pads erneuert. Speichertemperatur jetzt unter 80 Grad, keine Artefakte, alle Lüfter laufen ruhig. Rechnung vom Händler liegt bei.",
-    "rule_flags": ["mining_history"],
+    "rule_flags": ["warn:mining"],
     "code_signals": []
   },
   "expected": { "verdict_in": ["caution", "pass"], "must_flag": ["mining_history"] }

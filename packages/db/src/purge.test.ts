@@ -1,5 +1,6 @@
 import type pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from "vitest";
+import { MARKET_PURGE_STEPS } from "./market-store.js";
 import { runPurge } from "./purge.js";
 import { createTestDatabase, type TestDatabase } from "./testing/database.js";
 
@@ -271,5 +272,108 @@ describe("runPurge, batches", () => {
     expect(counts["classifier_sample"]).toBe(12_000);
     expect(statements.filter((text) => text.startsWith("DELETE FROM ebay_live.classifier_sample"))).toHaveLength(3);
     expect(await count("ebay_live.classifier_sample")).toBe(0);
+  });
+});
+
+describe("runPurge, per-product Claude usage (spec 2.8)", () => {
+  it("deletes a product's Claude day more than 30 Berlin days old and keeps day 30", async () => {
+    await database.pool.query("TRUNCATE app.llm_usage_product_daily");
+    // NOW is 2026-10-21 in Berlin: 2026-09-20 is 31 days before it, 2026-09-21 is 30.
+    await database.pool.query(
+      "INSERT INTO app.llm_usage_product_daily (day_berlin, product_key, calls) VALUES ('2026-09-20', 'p_abcdefghij', 1), ('2026-09-21', 'p_abcdefghij', 1)",
+    );
+
+    const counts = await runPurge(worker, clock);
+
+    expect(counts["llm_usage_product_daily"]).toBe(1);
+    const days = await database.pool.query<{ day: string }>("SELECT day_berlin::text AS day FROM app.llm_usage_product_daily");
+    expect(days.rows).toEqual([{ day: "2026-09-21" }]);
+  });
+});
+
+describe("runPurge, market tables (spec 2.4)", () => {
+  it("runs every market step of the market store and deletes a market run older than 30 days", async () => {
+    await database.pool.query("TRUNCATE app.product CASCADE");
+    const product = await database.pool.query<{ id: string }>(
+      `INSERT INTO app.product (key, name, description, category_id, condition_ids, search_words, must_words, price_mode,
+         max_cents, sweep_minute, buyer_profile)
+       VALUES ('p_abcdefghij', 'n', 'd', '27386', '{3000}', '{w}', '[["w"]]', 'fixed', 100, 1, 'company') RETURNING id`,
+    );
+    await database.pool.query("INSERT INTO app.market_run (product_id, started_at, finished_at, status) VALUES ($1, $2, $2, 'ok'), ($1, $3, $3, 'ok')", [
+      product.rows[0]?.id,
+      ago(30 * DAY),
+      ago(30 * DAY - 1),
+    ]);
+
+    const counts = await runPurge(worker, clock);
+
+    expect(Object.keys(counts)).toEqual(expect.arrayContaining(MARKET_PURGE_STEPS.map((market) => market.name)));
+    expect(counts["market_run"]).toBe(1);
+    expect(await count("app.market_run")).toBe(1);
+  });
+});
+
+describe("runPurge, a failing v2 step (spec 2.10)", () => {
+  it("reports the step, runs the steps after it and records the run as error", async () => {
+    await database.pool.query("TRUNCATE auth.rate_counter");
+    await database.pool.query("INSERT INTO auth.rate_counter (key, window_start, count) VALUES ('k', $1, 1)", [ago(3 * DAY)]);
+    const failing = {
+      query: ((text: string, values?: unknown[]) =>
+        text.startsWith("DELETE FROM auth.session") ? Promise.reject(new Error("session step failed")) : worker.query(text, values)) as typeof worker.query,
+    };
+    const failed: string[] = [];
+
+    const counts = await runPurge(failing, clock, { onStepError: (step) => failed.push(step) });
+
+    expect(failed).toEqual(["session"]);
+    expect(counts["rate_counter"]).toBe(1);
+    expect(counts).not.toHaveProperty("session");
+    const runs = await database.pool.query<{ status: string }>("SELECT status FROM app.purge_run ORDER BY started_at DESC LIMIT 1");
+    expect(runs.rows).toEqual([{ status: "error" }]);
+  });
+});
+
+describe("runPurge, sign-in tables (spec 2.6)", () => {
+  it("deletes attempts after 24 h, ended or expired sessions and revoked or unused devices after their lifetime, counters after 2 days and events after 90 days", async () => {
+    await database.pool.query("TRUNCATE auth.login_attempt, auth.session, auth.device, auth.rate_counter, auth.auth_event, auth.app_user CASCADE");
+    const user = await database.pool.query<{ id: string }>("INSERT INTO auth.app_user (email, role) VALUES ('purge@example.org', 'admin') RETURNING id");
+    const userId = user.rows[0]?.id;
+    const q = (statement: string, params: unknown[]) => database.pool.query(statement, [userId, ...params]);
+    for (const [n, at] of [ago(DAY), ago(DAY - 1)].entries()) {
+      await q(
+        `INSERT INTO auth.login_attempt (ref, attempt_hash, user_id, email_mac, code_mac, created_at, expires_at)
+         VALUES ('K7QF', $2, $1, 'e', 'c', $3, $3)`,
+        [`a${n}`, at],
+      );
+    }
+    const session = (token: string, expiresAt: Date, endedAt: Date | null) =>
+      q(
+        `INSERT INTO auth.session (token_hash, user_id, csrf_secret, last_seen_at, expires_at, ended_at, end_reason, created_at)
+         VALUES ($2, $1, 's', $3, $3, $4, $5, $3)`,
+        [token, expiresAt, endedAt, endedAt === null ? null : "logout"],
+      ).then(() => undefined);
+    await session("ended_old", ago(40 * DAY), ago(30 * DAY));
+    await session("ended_young", ago(40 * DAY), ago(30 * DAY - 1));
+    await session("expired_old", ago(30 * DAY), null);
+    await session("expired_young", ago(30 * DAY - 1), null);
+    const device = (token: string, lastUsedAt: Date, revokedAt: Date | null) =>
+      q("INSERT INTO auth.device (user_id, token_hash, last_used_at, revoked_at, created_at) VALUES ($1, $2, $3, $4, $3)", [token, lastUsedAt, revokedAt]);
+    await device("revoked_old", ago(DAY), ago(30 * DAY));
+    await device("revoked_young", ago(DAY), ago(30 * DAY - 1));
+    await device("unused_old", ago(180 * DAY), null);
+    await device("unused_young", ago(180 * DAY - 1), null);
+    await database.pool.query("INSERT INTO auth.rate_counter (key, window_start, count) VALUES ('k', $1, 1), ('k', $2, 1)", [ago(2 * DAY), ago(2 * DAY - 1)]);
+    await database.pool.query("INSERT INTO auth.auth_event (at, event) VALUES ($1, 'login_succeeded'), ($2, 'login_succeeded')", [ago(90 * DAY), ago(90 * DAY - 1)]);
+
+    const counts = await runPurge(worker, clock);
+
+    expect(counts).toMatchObject({ login_attempt: 1, session: 2, device: 2, rate_counter: 1, auth_event: 1 });
+    const tokens = await database.pool.query<{ token_hash: string }>(
+      "SELECT token_hash FROM auth.session UNION ALL SELECT token_hash FROM auth.device ORDER BY 1",
+    );
+    expect(tokens.rows.map((row) => row.token_hash)).toEqual(["ended_young", "expired_young", "revoked_young", "unused_young"]);
+    for (const table of ["login_attempt", "rate_counter", "auth_event"]) {
+      expect(await count(`auth.${table}`), table).toBe(1);
+    }
   });
 });

@@ -1,0 +1,38 @@
+{
+  "id": "24-lens-hood-and-caps-only",
+  "set": "v2",
+  "group": "scam",
+  "product_kind": "other",
+  "product": {
+    "name": "Canon EF 50mm f/1.8 STM",
+    "description": "The Canon EF 50mm f/1.8 STM prime lens for the Canon EF mount: the lens itself, in working order, with clean glass.",
+    "must_contain": [["ef 50mm", "50mm"], ["stm"]],
+    "must_not_contain": ["defekt", "pilz"],
+    "conditions": ["open_box", "used"],
+    "limit_eur": 95
+  },
+  "listing": {
+    "title": "Canon EF 50mm 1.8 STM Streulichtblende ES-68 und Objektivdeckel",
+    "condition": "Gebraucht",
+    "condition_description": "Wie neu.",
+    "price_eur": 14.9,
+    "shipping_eur": 2.5,
+    "landed_eur": 17.4,
+    "owner_max_eur": 95,
+    "percent_of_max": 18,
+    "seller": { "feedback_score": 54, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 7,
+    "item_specifics": [
+      { "name": "Marke", "value": "Canon" },
+      { "name": "Kompatible Marke", "value": "Canon" },
+      { "name": "Produktart", "value": "Gegenlichtblende" }
+    ],
+    "image_count": 3,
+    "description": "Verkauft wird nur das Zubehör: die originale Streulichtblende ES-68 und ein Objektivdeckel 49 mm, passend für das Canon EF 50mm f/1.8 STM. Das Objektiv selbst ist nicht dabei, das habe ich schon verkauft. Versand als Warensendung.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_not": ["pass"], "product_match_in": ["mismatch"] }
+}

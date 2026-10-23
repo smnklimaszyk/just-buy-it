@@ -1,15 +1,20 @@
 # Traefik route for the eBay deal monitor (repo: ebay-sniper, compose project: ebay-sniper)
-# Container: ebay-sniper-server-1, published on 127.0.0.1:3140
-# Only /healthz, /privacy and /ebay/account-deletion are routed; any other path on this host
-# gets Traefik's default 404 and never reaches the container.
-# The rate limit is far above eBay's own traffic (at most about 1,500 deletion notifications a day),
-# so retries from eBay are never refused; it only stops floods.
-# Request bodies over 64 KB get a 413 here (buffering middleware); the app refuses them too.
+# Containers: ebay-sniper-server-1 on 127.0.0.1:3140, ebay-sniper-web-1 on 127.0.0.1:3141.
+# /healthz, /privacy and /ebay/account-deletion go to server at priority 100, so they win over the
+# web routers whatever the rule length; POSTs under /login go to web at 50 with a tight per-IP
+# limit; every other path of the host goes to web at 10 (spec 7.10, ADR 0038).
+# The server rate limit is far above eBay's own traffic (at most about 1,500 deletion notifications
+# a day), so retries from eBay are never refused; it only stops floods.
+# Request bodies over 64 KB get a 413 here (buffering middleware) on every router; the apps refuse
+# them too.
+# Rollback to Release 0: put the previous file back, or every path but the three server paths
+# gives 502 once the deploy has stopped web.
 
 http:
   routers:
     ebay-sniper-http:
       rule: "Host(`deals.intra-ai.de`) && (Path(`/healthz`) || Path(`/privacy`) || Path(`/ebay/account-deletion`))"
+      priority: 100
       entryPoints:
         - web
       service: ebay-sniper
@@ -18,6 +23,7 @@ http:
 
     ebay-sniper-https:
       rule: "Host(`deals.intra-ai.de`) && (Path(`/healthz`) || Path(`/privacy`) || Path(`/ebay/account-deletion`))"
+      priority: 100
       entryPoints:
         - websecure
       service: ebay-sniper
@@ -28,12 +34,71 @@ http:
         - ebay-sniper-ratelimit
         - ebay-sniper-body-limit
 
+    # Sign-in and code POSTs (spec 7.2): a tight per-IP limit in front of web's own counters.
+    ebay-sniper-login-http:
+      rule: "Host(`deals.intra-ai.de`) && PathPrefix(`/login`) && Method(`POST`)"
+      priority: 50
+      entryPoints:
+        - web
+      service: ebay-sniper-web
+      middlewares:
+        - redirect-to-https
+
+    ebay-sniper-login-https:
+      rule: "Host(`deals.intra-ai.de`) && PathPrefix(`/login`) && Method(`POST`)"
+      priority: 50
+      entryPoints:
+        - websecure
+      service: ebay-sniper-web
+      tls:
+        certResolver: le
+      middlewares:
+        - hsts-headers
+        - ebay-sniper-login-ratelimit
+        - ebay-sniper-body-limit
+
+    # Everything else on the host is the admin UI (spec 7.1).
+    ebay-sniper-web-http:
+      rule: "Host(`deals.intra-ai.de`)"
+      priority: 10
+      entryPoints:
+        - web
+      service: ebay-sniper-web
+      middlewares:
+        - redirect-to-https
+
+    ebay-sniper-web-https:
+      rule: "Host(`deals.intra-ai.de`)"
+      priority: 10
+      entryPoints:
+        - websecure
+      service: ebay-sniper-web
+      tls:
+        certResolver: le
+      middlewares:
+        - hsts-headers
+        - ebay-sniper-web-ratelimit
+        - ebay-sniper-body-limit
+
   middlewares:
     ebay-sniper-ratelimit:
       rateLimit:
         average: 10
         period: 1s
         burst: 50
+
+    ebay-sniper-login-ratelimit:
+      rateLimit:
+        average: 10
+        period: 1m
+        burst: 5
+
+    # A page load fetches the styles, fonts and scripts too; this only stops floods.
+    ebay-sniper-web-ratelimit:
+      rateLimit:
+        average: 20
+        period: 1s
+        burst: 100
 
     ebay-sniper-body-limit:
       buffering:
@@ -44,3 +109,8 @@ http:
       loadBalancer:
         servers:
           - url: "http://127.0.0.1:3140"
+
+    ebay-sniper-web:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:3141"

@@ -1,5 +1,6 @@
 import { PgBoss } from "pg-boss";
 import type { Queryable } from "../pool.js";
+import { SERVICE_POOLS } from "../pools.js";
 import { QUEUE_NAMES, QUEUES, type QueueName, type QueuePayloads } from "./registry.js";
 import { PGBOSS_SCHEMA } from "./schema-version.js";
 
@@ -35,7 +36,7 @@ export async function startQueue(options: {
   const boss = new PgBoss({
     connectionString: options.connectionString,
     schema: PGBOSS_SCHEMA,
-    max: 4,
+    max: SERVICE_POOLS.pgBoss,
     migrate: false,
     schedule: true,
     supervise: true,

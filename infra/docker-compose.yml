@@ -24,15 +24,9 @@ services:
       DELETION_PROBE_CODE: ${DELETION_PROBE_CODE:?DELETION_PROBE_CODE is required}
       # The app role: SELECT, INSERT and UPDATE on the deletion tables only, not the superuser.
       DATABASE_URL: postgres://app:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@postgres:5432/ebay_sniper
-      # The internal dashboard listener (MVP section 8), read-only through the dashboard role.
-      DASHBOARD_PORT: "3001"
-      DASHBOARD_DATABASE_URL: postgres://dashboard:${POSTGRES_DASHBOARD_PASSWORD:?POSTGRES_DASHBOARD_PASSWORD is required}@postgres:5432/ebay_sniper
     # No depends_on: the deletion endpoint must answer while Postgres is down (A4).
-    # 3142 is the dashboard: on the host 127.0.0.1 only and never in the Traefik route; reach it
-    # over an SSH tunnel.
     ports:
       - "127.0.0.1:3140:3000"
-      - "127.0.0.1:3142:3001"
     read_only: true
     tmpfs:
       - /tmp
@@ -66,7 +60,7 @@ services:
       BUYER_PROFILE: ${BUYER_PROFILE:-}
       # Unset: screening is skipped and alerts say "Not screened by Claude: not_configured".
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      CLAUDE_MODEL: ${CLAUDE_MODEL:-}
+      # The ceilings of the Claude settings; the model and effort are settings (spec 2.5).
       CLAUDE_DAILY_CALL_LIMIT: ${CLAUDE_DAILY_CALL_LIMIT:-}
       CLAUDE_DAILY_SPEND_LIMIT_USD: ${CLAUDE_DAILY_SPEND_LIMIT_USD:-}
       # All five or none; unset, alerts stay pending with hold reason smtp_not_configured.
@@ -109,6 +103,71 @@ services:
         max-size: 10m
         max-file: "3"
 
+  # The admin UI and the sign-in (spec 7.1, ADR 0038). Same image; deals.intra-ai.de reaches it
+  # through Traefik, except /healthz, /privacy and the deletion endpoint, which stay on server.
+  web:
+    image: ebay-sniper-server:${GIT_SHA:?GIT_SHA is required}
+    working_dir: /app/apps/web
+    command: ["node", "dist/main.js"]
+    # An explicit list, like the server and the worker: never the whole .env.
+    environment:
+      PORT: "3000"
+      TZ: UTC
+      # The web role: the product, setting and auth tables, never a DELETE on auth (spec 2.10).
+      DATABASE_URL: postgres://web:${POSTGRES_WEB_PASSWORD:?POSTGRES_WEB_PASSWORD is required}@postgres:5432/ebay_sniper
+      # Sign-in codes, sessions and devices are keyed with it (spec 7.3). web and ops only.
+      AUTH_KEY: ${AUTH_KEY:?AUTH_KEY is required}
+      # The CSRF check compares the Origin header with it (spec 7.6).
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN is required}
+      # Always among a product's alert recipients; the product form shows it.
+      ALERT_TO: ${ALERT_TO:?ALERT_TO is required}
+      BUYER_PROFILE: ${BUYER_PROFILE:-}
+      # The ceilings the settings page and the cost preview clamp to, as the worker reads them.
+      CLAUDE_DAILY_CALL_LIMIT: ${CLAUDE_DAILY_CALL_LIMIT:-}
+      CLAUDE_DAILY_SPEND_LIMIT_USD: ${CLAUDE_DAILY_SPEND_LIMIT_USD:-}
+      # The noreply@ mailbox, never the alert mailbox (ADR 0038). All five or none; unset, only
+      # `ops auth code` signs people in.
+      LOGIN_SMTP_HOST: ${LOGIN_SMTP_HOST:-}
+      LOGIN_SMTP_PORT: ${LOGIN_SMTP_PORT:-}
+      LOGIN_SMTP_USER: ${LOGIN_SMTP_USER:-}
+      LOGIN_SMTP_PASSWORD: ${LOGIN_SMTP_PASSWORD:-}
+      LOGIN_FROM: ${LOGIN_FROM:-}
+      LOG_LEVEL: ${LOG_LEVEL:-}
+      # About 60% of mem_limit, as for the worker (spec 9.1).
+      NODE_OPTIONS: --max-old-space-size=115
+    depends_on:
+      # The deploy passes --no-deps; Postgres is up and migrated by then. web checks its role
+      # before it listens.
+      postgres:
+        condition: service_healthy
+    # On the host's loopback only: Traefik reaches it there, people never directly.
+    ports:
+      - "127.0.0.1:3141:3000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 192m
+    # SIGTERM: no new requests; running ones and queued sign-in mail finish (at most two tries of
+    # 10 s, 30 s apart), then the pool closes.
+    stop_grace_period: 60s
+    restart: unless-stopped
+    healthcheck:
+      # The image's check is for the server's port; web answers on the same port inside its container.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
   postgres:
     image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     restart: unless-stopped
@@ -117,8 +176,8 @@ services:
       POSTGRES_DB: ebay_sniper
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       TZ: UTC
-    # shared_buffers stays at the default (ADR 0012).
-    command: ["postgres", "-c", "max_connections=30"]
+    # shared_buffers stays at the default (ADR 0012). max_connections: see packages/db/src/pools.ts.
+    command: ["postgres", "-c", "max_connections=32"]
     volumes:
       # Postgres 18 images keep PGDATA at /var/lib/postgresql/18/docker, inside this mount.
       - pgdata:/var/lib/postgresql
@@ -152,9 +211,18 @@ services:
       DATABASE_URL: postgres://ebay_sniper:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/ebay_sniper
       # Set as the app role password on every run, then checked by connecting as app.
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}
-      # Set as the worker and dashboard role passwords, then checked by each role's probe.
+      # Set as the worker, dashboard and web role passwords, then checked by each role's probe.
       POSTGRES_WORKER_PASSWORD: ${POSTGRES_WORKER_PASSWORD:?POSTGRES_WORKER_PASSWORD is required}
       POSTGRES_DASHBOARD_PASSWORD: ${POSTGRES_DASHBOARD_PASSWORD:?POSTGRES_DASHBOARD_PASSWORD is required}
+      POSTGRES_WEB_PASSWORD: ${POSTGRES_WEB_PASSWORD:?POSTGRES_WEB_PASSWORD is required}
+      # Made active admins while no active admin exists (spec 7.8).
+      AUTH_BOOTSTRAP_ADMINS: ${AUTH_BOOTSTRAP_ADMINS:?AUTH_BOOTSTRAP_ADMINS is required}
+      # The ops CLI runs in this service too: `ops auth code` and `ops auth unlock` derive the same
+      # keys as web, and products and settings are checked against the Claude ceilings.
+      AUTH_KEY: ${AUTH_KEY:?AUTH_KEY is required}
+      CLAUDE_DAILY_CALL_LIMIT: ${CLAUDE_DAILY_CALL_LIMIT:-}
+      CLAUDE_DAILY_SPEND_LIMIT_USD: ${CLAUDE_DAILY_SPEND_LIMIT_USD:-}
+      BUYER_PROFILE: ${BUYER_PROFILE:-}
       TZ: UTC
     working_dir: /app/apps/ops
     command: ["node", "dist/main.js", "migrate"]

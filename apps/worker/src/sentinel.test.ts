@@ -1,3 +1,4 @@
+import { saveProductWithPlan } from "@ebay-sniper/db";
 import { QUEUES, type JobQueue, type QueueName } from "@ebay-sniper/db/queue";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { runMailTest } from "./cli.js";
@@ -5,11 +6,14 @@ import { parseEnv } from "./env.js";
 import { CLAUDE_TEST_KEY, createFakeClaude } from "./testing/claude.js";
 import { createTestClock } from "./testing/clock.js";
 import { createTestDatabase, type TestDatabase } from "./testing/database.js";
-import { createFakeEbay, createFakeReserve, fakeLegacyItemId, gpuSummary, searchPage } from "./testing/ebay.js";
+import { createFakeEbay, createFakeReserve, fakeLegacyItemId, itemSummary, searchPage, type SummaryFields } from "./testing/ebay.js";
 import { createTestLog } from "./testing/log.js";
 import { resetTables, startTestQueue } from "./testing/queue.js";
 import { createFakeSmtp, SMTP_TEST_PASSWORD } from "./testing/smtp.js";
 import { createWiring } from "./wiring.js";
+
+const lensSummary = (fields: SummaryFields = {}) =>
+  itemSummary({ categoryId: "3323", title: "Canon EF 85mm 1.8 USM", ...fields });
 
 // Section 10, sentinel (A23 and secrets): a seller username, the Claude key and the SMTP password
 // go through the whole flow, including a Claude 401 whose body echoes the key and an SMTP EAUTH
@@ -56,15 +60,44 @@ afterAll(async () => {
   await db.drop();
 }, 30_000);
 
+// Synthetic example product (ADR 0023), saved two hours before NOW, so a listing created an hour
+// ago is after its watch_from.
+const LENS_CATEGORY = "3323";
+let searchId: string;
+
 beforeEach(async () => {
   await resetTables(db);
-  await db.admin.query("UPDATE app.feed SET enabled = true");
-  // Past the gpu feed's baseline poll.
   await db.admin.query(
-    `INSERT INTO app.seen_item (item_key, key_version, feed_id, outcome, first_seen_at, last_seen_at)
-     VALUES ($1, 1, 'gpu', 'baseline', $2, $2)`,
-    ["f".repeat(64), new Date(NOW.getTime() - HOUR_MS)],
+    `TRUNCATE app.product, app.product_source, app.product_revision, app.search, app.search_product, app.setting,
+       app.market_value, app.market_request CASCADE`,
   );
+  const saved = await saveProductWithPlan(
+    db.admin,
+    {
+      kind: "create",
+      fields: {
+        name: "Portrait lens",
+        description: "An 85 mm portrait lens for a full-frame camera.",
+        status: "active",
+        categoryId: LENS_CATEGORY,
+        conditionIds: ["3000"],
+        searchWords: ["85mm"],
+        mustWords: [["85mm"]],
+        priceMode: "fixed",
+        maxCents: 52_000,
+        buyerProfile: "private",
+      },
+    },
+    {
+      at: new Date(NOW.getTime() - 2 * HOUR_MS),
+      actor: "system:cli",
+      userId: null,
+      env: { claudeDailyCallLimit: 40, claudeDailySpendLimitMicrousd: 2_000_000, buyerProfile: null },
+    },
+  );
+  if (!saved.ok) throw new Error(`save refused: ${JSON.stringify(saved)}`);
+  const search = await db.admin.query<{ search_id: string }>("SELECT search_id FROM app.search_product WHERE product_id = $1", [saved.product.id]);
+  searchId = search.rows[0]?.search_id ?? "";
 });
 
 // Every row of every table the worker or pg-boss writes, as text.
@@ -133,17 +166,17 @@ describe("sentinel: seller username and secrets through the whole flow (A23, sec
     const legacyItemId = fakeLegacyItemId();
     const created = new Date(NOW.getTime() - HOUR_MS).toISOString();
     const seller = { username: SELLER_SENTINEL, feedbackScore: 250, feedbackPercentage: "99.5", sellerAccountType: "INDIVIDUAL" };
-    ebay.searchPages(searchPage([gpuSummary({ legacyItemId, price: "450.00", shipping: "10.00", itemCreationDate: created, seller })]));
+    ebay.searchPages(searchPage([lensSummary({ legacyItemId, price: "450.00", shipping: "10.00", itemCreationDate: created, seller })]));
     ebay.item(`v1|${legacyItemId}|0`, {
       itemId: `v1|${legacyItemId}|0`,
       legacyItemId,
-      title: "RTX 3090 Founders Edition 24GB",
+      title: "Canon EF 85mm 1.8 USM",
       price: { value: "450.00", currency: "EUR" },
       buyingOptions: ["FIXED_PRICE"],
-      categoryId: "27386",
+      categoryId: LENS_CATEGORY,
       condition: "Gebraucht",
       conditionId: "3000",
-      description: "<p>Card works fine, two years of gaming use.</p>",
+      description: "<p>Lens works fine, two years of portrait use.</p>",
       shippingOptions: [{ shippingCostType: "FIXED", shippingCost: { value: "10.00", currency: "EUR" } }],
       itemLocation: { country: "DE" },
       seller,
@@ -155,7 +188,7 @@ describe("sentinel: seller username and secrets through the whole flow (A23, sec
     claude.status(401, { type: "error", error: { type: "authentication_error", message: `invalid x-api-key: ${CLAUDE_TEST_KEY}` } });
     smtp.reply("auth");
 
-    await queue.send("poll", { feedId: "gpu" });
+    await queue.send("poll", { searchId });
     await run("poll");
     await run("enrich");
     await run("screen");
@@ -185,7 +218,9 @@ describe("sentinel: seller username and secrets through the whole flow (A23, sec
     smtp.reply("auth");
     const email = { deliveryId: "0199f0a2-7c1e-7b3a-9d4e-2f6a8b0c1d2e", to: "owner@example.test", subject: "s", text: "t", html: "h" };
 
-    const claudeError: unknown = await wiring.screener?.screen("<listing>{}</listing>").catch((error: unknown) => error);
+    const claudeError: unknown = await wiring.screener
+      ?.screen({ model: "claude-sonnet-5-5", effort: "medium", userMessage: "<listing>{}</listing>" })
+      .catch((error: unknown) => error);
     const smtpError: unknown = await wiring.mailer?.send(email).catch((error: unknown) => error);
 
     expect(claudeError).toMatchObject({ code: "auth_failed", status: 401 });

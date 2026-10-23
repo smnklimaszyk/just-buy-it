@@ -1,4 +1,4 @@
-import type { BuyerProfile, ListingFlag, Segment, Verdict } from "@ebay-sniper/domain";
+import type { BuyerProfile, Verdict } from "@ebay-sniper/domain";
 import type { Queryable } from "./pool.js";
 
 // Section 6.1. kind is always band, tier none and seq 1 in the MVP (one alert per item, Q6).
@@ -6,12 +6,13 @@ export type AlertInput = {
   itemKey: string;
   candidateId: string;
   screeningId: string | null;
-  segment: Segment;
+  // The product key; rows written before v2 hold a segment.
+  segment: string;
   finalVerdict: Verdict;
   modelVerdict: Verdict | null;
   blockedByCode: boolean;
   screened: boolean;
-  flags: ListingFlag[];
+  flags: string[];
   priceCents: number;
   shippingCents: number | null;
   landedCents: number | null;

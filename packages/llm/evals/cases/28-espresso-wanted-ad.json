@@ -1,0 +1,34 @@
+{
+  "id": "28-espresso-wanted-ad",
+  "set": "v2",
+  "group": "scam",
+  "product_kind": "other",
+  "product": {
+    "name": "Rancilio Silvia espresso machine",
+    "description": "A used Rancilio Silvia single-boiler espresso machine, version V3 or later, complete with portafilter and working.",
+    "must_contain": [["rancilio"], ["silvia"]],
+    "must_not_contain": ["defekt", "ersatzteil"],
+    "conditions": ["refurbished", "used"],
+    "limit_eur": 520
+  },
+  "listing": {
+    "title": "Rancilio Silvia Espressomaschine V4 V5 V6 alle Versionen",
+    "condition": "Gebraucht",
+    "condition_description": null,
+    "price_eur": 1,
+    "shipping_eur": 0,
+    "landed_eur": 1,
+    "owner_max_eur": 520,
+    "percent_of_max": 0,
+    "seller": { "feedback_score": 12, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 30,
+    "item_specifics": [{ "name": "Marke", "value": "Rancilio" }],
+    "image_count": 1,
+    "description": "Ich suche eine gebrauchte Rancilio Silvia, gerne V4 bis V6, auch mit Gebrauchsspuren. Bitte schreibt mir über die eBay-Nachrichten, was ihr habt und was ihr dafür haben wollt. Der Preis von 1 Euro ist nur ein Platzhalter, ich verkaufe hier nichts.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_not": ["pass"], "product_match_in": ["mismatch"] }
+}

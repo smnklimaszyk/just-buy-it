@@ -5,14 +5,12 @@ import {
   formatEur,
   removeHiddenCharacters,
   routeAlert,
-  segmentLabel,
   vatLine,
   type AlertLabel,
   type BuyerProfile,
   type CodeSignal,
-  type ListingFlag,
+  type PriceMode,
   type ProductMatch,
-  type SegmentRule,
   type SellerAccountType,
   type Verdict,
 } from "@ebay-sniper/domain";
@@ -22,12 +20,20 @@ export type AlertScreening =
   | { screened: true; verdict: Verdict; productMatch: ProductMatch; riskFlags: readonly string[]; reason: string }
   | { screened: false; code: string };
 
+// The product the alert is for, as the buyer named it.
+export type AlertProduct = { name: string; perGb: boolean };
+
+// The limit the listing passed (spec 6.4), per GB when the product prices per GB. In market mode
+// `marketValueCents` is the typical asking price the limit came from, or null when the cap applies
+// ("using your cap"). The email, the product page and Claude get the same number.
+export type AlertLimit = { limitCents: number; priceMode: PriceMode; marketValueCents: number | null };
+
 // Everything one alert email shows. There is no field for the seller's identity, so it cannot
 // reach the email.
 export type AlertEmailInput = {
   deliveryId: string;
-  // The segment rule the candidate passed: segment, max and rule version.
-  rule: SegmentRule;
+  product: AlertProduct;
+  limit: AlertLimit;
   buyerProfile: BuyerProfile;
   legacyItemId: string;
   title: string;
@@ -36,13 +42,14 @@ export type AlertEmailInput = {
   priceCents: number;
   // null while shipping to DE is unknown; never counted as zero.
   shippingCents: number | null;
-  // Per-GB segments only.
+  // Products priced per GB only.
   totalGb: number | null;
   condition: string | null;
   seller: { accountType: SellerAccountType | null; feedbackScore: number | null; feedbackPercent: number | null };
   // null for an alert built from summary data (getItem did not run).
   returns: { accepted: boolean | null; periodDays: number | null } | null;
-  flags: readonly ListingFlag[];
+  // The candidate's flags as the matcher wrote them, `warn:<word>` included.
+  flags: readonly string[];
   // The cleaned description, read only for the VAT line.
   descriptionText: string | null;
   screening: AlertScreening;
@@ -70,7 +77,7 @@ type Content = {
   footer: string;
 };
 
-const FLAG_WORDS: Record<ListingFlag, string> = {
+const FLAG_WORDS: Record<string, string> = {
   untested: "untested",
   mining_history: "mining history",
   custom_cooling: "custom cooling",
@@ -81,6 +88,8 @@ const FLAG_WORDS: Record<ListingFlag, string> = {
   low_feedback: "fewer than 10 ratings",
   best_offer: "best offer possible",
 };
+
+const WARN_PREFIX = "warn:";
 
 const CHECKLIST = [
   "Buy only through eBay checkout. Never pay or talk outside eBay.",
@@ -94,19 +103,19 @@ const SUBJECT_MARK: Record<EmailedLabel, string> = {
   pass: "PASS",
   check: "CHECK",
   claude_says_block: "CLAUDE SAYS BLOCK",
-  not_screened: "NOT SCREENED",
+  not_screened: "NOT CHECKED BY CLAUDE",
 };
 const SCREENING_HEADING: Record<EmailedLabel, string> = {
   pass: "PASS",
   check: "CHECK BEFORE BUYING",
   claude_says_block: "CLAUDE SAYS BLOCK",
-  not_screened: "NOT SCREENED",
+  not_screened: "NOT CHECKED",
 };
 
 // Section 6.2: the model's reason, cut for the email.
 const MAX_REASON_CHARS = 300;
 
-// Seller and model text on one line: hidden characters removed, line breaks and runs of
+// Seller, buyer and model text on one line: hidden characters removed, line breaks and runs of
 // whitespace collapsed, so it cannot shift the layout or forge a line of the email.
 const oneLine = (text: string): string => collapseWhitespace(removeHiddenCharacters(text));
 // Cut to a number of code points, so no surrogate pair is split.
@@ -117,6 +126,11 @@ const list = (items: readonly string[]): string => (items.length === 0 ? "none" 
 const words = (code: string): string => code.replaceAll("_", " ");
 const wholeEur = (cents: number): string => `EUR ${Math.round(cents / 100).toLocaleString("en-US")}`;
 const row = (label: string, ...values: string[]): Row => ({ label, values });
+
+function flagText(flag: string): string {
+  if (flag.startsWith(WARN_PREFIX)) return `contains "${oneLine(flag.slice(WARN_PREFIX.length))}"`;
+  return FLAG_WORDS[flag] ?? words(flag);
+}
 
 function sellerText(seller: AlertEmailInput["seller"]): string {
   const parts = [seller.accountType ?? "type unknown"];
@@ -192,27 +206,36 @@ function toHtml(content: Content): string {
 
 type ScreeningPart = Pick<Content, "screeningHeading" | "screeningRows" | "screeningNotes">;
 
-function screeningPart(screening: AlertScreening, label: EmailedLabel, codeSignals: readonly CodeSignal[]): ScreeningPart {
+function screeningPart(
+  screening: AlertScreening,
+  label: EmailedLabel,
+  productMatch: ProductMatch | null,
+  codeSignals: readonly CodeSignal[],
+): ScreeningPart {
   // The code signals that raised the verdict to at least caution (section 5.6).
   const codeRows = codeSignals.length === 0 ? [] : [row("Code checks", list(codeSignals.map(words)))];
   if (!screening.screened) {
     return {
-      screeningHeading: `Claude screening: ${SCREENING_HEADING.not_screened}`,
+      screeningHeading: `Claude check: ${SCREENING_HEADING.not_screened}`,
       screeningRows: codeRows,
-      screeningNotes: [`Not screened by Claude: ${screening.code}. Check the listing yourself.`],
+      // Owner decision 6: an alert Claude could not check says so, with the reason.
+      screeningNotes: [`Not checked by Claude: ${oneLine(screening.code)}. Check the listing yourself.`],
     };
   }
+  const notes: string[] = [];
+  // Spec 4.3: unclear, or a listing that tried to address the model.
+  if (productMatch === "unclear") notes.push("Claude is not sure this is the product.");
+  if (label === "claude_says_block") {
+    notes.push("Code checks found no payment or contact scam sign. Read the listing carefully before buying.");
+  }
   return {
-    screeningHeading: `Claude screening: ${SCREENING_HEADING[label]}`,
+    screeningHeading: `Claude check: ${SCREENING_HEADING[label]}`,
     screeningRows: [
       row("Reason", cut(oneLine(screening.reason), MAX_REASON_CHARS)),
       row("Risk flags", list(screening.riskFlags.map(words))),
       ...codeRows,
     ],
-    screeningNotes:
-      label === "claude_says_block"
-        ? ["Code checks found no payment or contact scam sign. Read the listing carefully before buying."]
-        : [],
+    screeningNotes: notes,
   };
 }
 
@@ -223,37 +246,42 @@ function returnsText(returns: AlertEmailInput["returns"]): string {
   return returns.periodDays === null ? "accepted" : `accepted, ${returns.periodDays} days`;
 }
 
-type PriceAgainstRule = { subjectName: string; subjectNote: string; ruleRow: Row };
+type PriceAgainstLimit = { subjectName: string; subjectNote: string; limitRow: Row };
 
-// The price measured against the segment's max: per item as a share of the max landed price,
-// per GB as the price per GB (rounded to the cent) and its share of the per-GB max.
-function priceAgainstRule(rule: SegmentRule, basisCents: number, totalGb: number | null): PriceAgainstRule {
-  const label = segmentLabel(rule.segment);
-  const version = `(rules v${rule.ruleVersion})`;
-  if (rule.kind === "per_item") {
-    const percent = Math.round((basisCents / rule.maxLandedCents) * 100);
-    return {
-      subjectName: label,
-      subjectNote: `${percent}% of max`,
-      ruleRow: row(
-        "Rule",
-        `${label}, landed price at most ${formatEur(rule.maxLandedCents)} ${version}`,
-        `${percent}% of your maximum`,
-      ),
-    };
+const percentOf = (part: number, whole: number): number => Math.round((part / whole) * 100);
+
+// How the price stands against the limit: in market mode with a value, how far below the typical
+// asking price it is; otherwise its share of the limit, and "using your cap" when market mode
+// had no value. Per GB the price per GB is compared, rounded to the cent only for display.
+function priceAgainstLimit(input: AlertEmailInput, basisCents: number): PriceAgainstLimit {
+  const { product, limit } = input;
+  const name = oneLine(product.name);
+  const usingCap = limit.priceMode === "below_market" && limit.marketValueCents === null;
+  const units = product.perGb ? input.totalGb : 1;
+  // The matcher rejects a per-GB listing without a total before any alert.
+  if (units === null) throw new Error("a product priced per GB needs the total GB");
+  const unit = product.perGb ? " per GB" : "";
+  const limitText = `${formatEur(limit.limitCents)}${unit}${usingCap ? ", using your cap" : ""}`;
+  let standing: string;
+  let subjectStanding: string;
+  if (limit.marketValueCents === null) {
+    const percent = percentOf(basisCents, limit.limitCents * units);
+    standing = `${percent} % of your limit`;
+    subjectStanding = usingCap ? "using your cap" : `${percent} % of limit`;
+  } else {
+    const below = 100 - percentOf(basisCents, limit.marketValueCents * units);
+    const value = `${formatEur(limit.marketValueCents)}${unit}`;
+    standing = `${below} % below the typical asking price of ${value}`;
+    subjectStanding = `${below} % below the typical asking price`;
   }
-  // The classifier rejects a RAM listing without a capacity (rule 17) before any alert.
-  if (totalGb === null) throw new Error("a per-GB rule needs the total GB");
-  const perGb = `${formatEur(Math.round(basisCents / totalGb))}/GB`;
-  const percent = Math.round((basisCents / (rule.maxCentsPerGb * totalGb)) * 100);
+  if (!product.perGb) {
+    return { subjectName: name, subjectNote: subjectStanding, limitRow: row("Limit", limitText, standing) };
+  }
+  const perGb = `${formatEur(Math.round(basisCents / units))} per GB`;
   return {
-    subjectName: `${label} ${totalGb} GB`,
-    subjectNote: perGb,
-    ruleRow: row(
-      "Rule",
-      `${label}, landed price at most ${formatEur(rule.maxCentsPerGb)}/GB ${version}`,
-      `${totalGb} GB at ${perGb}, ${percent}% of your maximum`,
-    ),
+    subjectName: `${name} ${units} GB`,
+    subjectNote: `${perGb}, ${subjectStanding}`,
+    limitRow: row("Limit", limitText, `${units} GB at ${perGb}, ${standing}`),
   };
 }
 
@@ -262,7 +290,7 @@ export function renderAlertEmail(input: AlertEmailInput): AlertEmail {
   // With shipping unknown the item price alone is compared, as in the price rules; it is the
   // lowest the landed price can be, never a landed price with zero shipping.
   const basisCents = shippingCents === null ? input.priceCents : input.priceCents + shippingCents;
-  const price = priceAgainstRule(input.rule, basisCents, input.totalGb);
+  const price = priceAgainstLimit(input, basisCents);
   const priceShown =
     shippingCents === null ? `${wholeEur(basisCents)} + unknown shipping` : `${wholeEur(basisCents)} incl. shipping`;
   const shippingRows =
@@ -270,14 +298,13 @@ export function renderAlertEmail(input: AlertEmailInput): AlertEmail {
       ? [row("Shipping", `unknown, landed price at least ${formatEur(basisCents)}`)]
       : [row("Shipping", formatEur(shippingCents)), row("Landed price", formatEur(basisCents))];
   const screening = input.screening;
-  const route = routeAlert(
-    finalVerdict(
-      screening.screened
-        ? { screened: true, verdict: screening.verdict, productMatch: screening.productMatch, riskFlags: screening.riskFlags }
-        : { screened: false, code: screening.code },
-      input.codeSignals,
-    ),
+  const verdict = finalVerdict(
+    screening.screened
+      ? { screened: true, verdict: screening.verdict, productMatch: screening.productMatch, riskFlags: screening.riskFlags }
+      : { screened: false, code: screening.code },
+    input.codeSignals,
   );
+  const route = routeAlert(verdict);
   // Section 5.7: a code-verified scam floor keeps the alert on the dashboard only.
   if (route.label === "blocked_by_code") throw new Error("an alert blocked by a code scam floor is never emailed");
   const subject = `[Deal] ${price.subjectName}: ${priceShown} (${price.subjectNote}) - ${SUBJECT_MARK[route.label]}`;
@@ -285,16 +312,17 @@ export function renderAlertEmail(input: AlertEmailInput): AlertEmail {
     title: oneLine(input.title),
     asOf: formatAsOf(input.asOf),
     details: [
+      row("Product", oneLine(input.product.name)),
       row("Price", formatEur(input.priceCents)),
       ...shippingRows,
-      price.ruleRow,
+      price.limitRow,
       row("Condition", input.condition === null ? "unknown" : oneLine(input.condition)),
       row("Seller", sellerText(input.seller)),
       row("Returns", returnsText(input.returns)),
-      row("Flags", list(input.flags.map((flag) => FLAG_WORDS[flag]))),
+      row("Flags", list(input.flags.map(flagText))),
     ],
     warning: route.label !== "pass",
-    ...screeningPart(screening, route.label, input.codeSignals),
+    ...screeningPart(screening, route.label, verdict.productMatch, input.codeSignals),
     vat: vatLine({
       profile: input.buyerProfile,
       sellerAccountType: input.seller.accountType,

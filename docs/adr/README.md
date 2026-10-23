@@ -1,45 +1,49 @@
 # Architecture decision records
 
-Index required by ADR 0001; D-xx: [02-decisions](../planning/02-decisions.md). Records 0001 to 0033 were written 2026-10-19, 0035 and 0036 on 2026-10-21; all are **proposed**; none is accepted until Simon merges it (Lifecycle below). A record is proposed before its work starts and accepted by "Needed by". Phase 0 starts Mon 19 Oct 2026. On day 1 (S0), before the ADR 0001 CI check is on, Simon turns each "Needed by" into an ISO date, recalibrated from Phase 0 actuals.
+Index required by ADR 0001; D-xx: [02-decisions](../planning/02-decisions.md). Records 0001 to 0033 were written 2026-10-19, 0035 and 0036 on 2026-10-21, 0037 to 0040 (platform v2) on 2026-10-22; all are **proposed**; none is accepted until Simon merges it (Lifecycle below). A record is proposed before its work starts and accepted by "Needed by". Phase 0 starts Mon 19 Oct 2026. On day 1 (S0), before the ADR 0001 CI check is on, Simon turns each "Needed by" into an ISO date, recalibrated from Phase 0 actuals.
 
 | ADR | Title | Status | Notes | Needed by |
 |---|---|---|---|---|
 | [0001](0001-record-architecture-decisions.md) | Record decisions as ADRs | proposed | Amended: solo approval | Phase 0 S1 |
 | [0002](0002-human-completes-every-purchase.md) | A person makes every purchase | proposed | | Phase 0 S5 |
 | [0003](0003-ebay-licence-gates-and-evidence-standard.md) | eBay terms: gate 1a only | proposed | Licence review is the operator's responsibility; out of scope for this repo | Phase 0 S5 |
-| [0004](0004-product-modes-and-slice-order.md) | Modes, slice order, 28-day review | proposed | | Phase 0 exit |
-| [0005](0005-core-stack-versions-and-schema-ownership.md) | Versions, one migrate step | proposed | Amended (S1b): runner timeouts and history check; pg-boss step in S4. MVP: pg-boss 12.38.0, schema 46, installed by the migrate runner; upgrade path deferred | Phase 0 S1 |
-| [0006](0006-monorepo-package-boundaries-and-ports.md) | Package boundaries and ports | proposed | Amended (S1b): `process.env` rule in ESLint; single `exports` entry. MVP: enqueue via the pg-boss `db` option, `db/queue` entry, new import rules; `notify` is SMTP (0035) | Phase 0 S1 |
-| [0007](0007-process-topology-and-outbound-calls.md) | Two processes, outbound calls | proposed | Amended (S1b): five-argument `reserve_ebay_call`, no overlapping windows | Phase 0 S1b |
+| [0004](0004-product-modes-and-slice-order.md) | Modes, slice order, 28-day review | proposed | v2: price rule per product (0037) | Phase 0 exit |
+| [0005](0005-core-stack-versions-and-schema-ownership.md) | Versions, one migrate step | proposed | Amended (S1b): runner timeouts and history check; pg-boss step in S4. MVP: pg-boss 12.38.0, schema 46, installed by the migrate runner; upgrade path deferred. v2 amendment: two looser forms in expand migrations; UI pins (0039) | Phase 0 S1 |
+| [0006](0006-monorepo-package-boundaries-and-ports.md) | Package boundaries and ports | proposed | Amended (S1b): `process.env` rule in ESLint; single `exports` entry. MVP: enqueue via the pg-boss `db` option, `db/queue` entry, new import rules; `notify` is SMTP (0035). v2: `apps/web` and its imports (0039) | Phase 0 S1 |
+| [0007](0007-process-topology-and-outbound-calls.md) | Two processes, outbound calls | proposed | Amended (S1b): five-argument `reserve_ebay_call`, no overlapping windows. v2: third process `web`, SMTP only (0039) | Phase 0 S1b |
 | [0008](0008-time-and-clock-handling.md) | Time and clock | proposed | | Phase 0 S1b |
-| [0009](0009-configuration-and-decision-versioning.md) | Config and decision versions | proposed | | Phase 1 entry |
-| [0010](0010-sector-and-marketplace-extensibility.md) | New sectors and marketplaces | proposed | | Phase 1 entry |
+| [0009](0009-configuration-and-decision-versioning.md) | Config and decision versions | proposed | v2: settings rows, eval gate per model and effort, candidate provenance (0037) | Phase 1 entry |
+| [0010](0010-sector-and-marketplace-extensibility.md) | New sectors and marketplaces | proposed | v2: superseded by 0037 once 0037 is accepted | Phase 1 entry |
 | [0011](0011-environments-accounts-and-secrets.md) | Environments, accounts, secrets | proposed | | Phase 0 S1 |
-| [0012](0012-hosting-and-deployment.md) | Shared host behind Traefik | proposed | Amended: shared host at `deals.intra-ai.de`; deploys only by Simon over SSH (ADR 0029); S1b: Postgres 512m, `max_connections` 30 | Phase 0 S2 |
+| [0012](0012-hosting-and-deployment.md) | Shared host behind Traefik | proposed | Amended: shared host at `deals.intra-ai.de`; deploys only by Simon over SSH (ADR 0029); S1b: Postgres 512m, `max_connections` 30 (32 in v2). v2: public site behind login, `web` service, router priorities (0038) | Phase 0 S2 |
 | [0013](0013-ebay-user-data-deletion-and-identifiers.md) | Deletion endpoint, item keys | proposed | `https://deals.intra-ai.de/ebay/account-deletion` | Phase 0 S3 |
-| [0014](0014-data-retention-classes-and-backups.md) | Data classes and retention | proposed | Lifetimes wait on D-11 (retention); S1b adds `ebay_quota_window` 90 d. MVP: purge of the worker's tables only; deletion, quota and audit retention deferred to Phase 1 S2 | Phase 1 entry |
-| [0015](0015-job-execution-idempotency-and-delivery.md) | Jobs, call claims, alert delivery | proposed | MVP: queue table, `poll_run` running rows and stale rule, relay as the one retry path for send | Phase 0 S4 |
-| [0016](0016-ebay-ingestion-feeds-and-call-budget.md) | Feeds and eBay call budget | proposed | | Phase 0 exit or D-20 supply test |
-| [0017](0017-fair-value-and-tier-assignment.md) | Fair value and tiers | proposed | Waits on reference price, sold ratio, thresholds | Phase 2 P2-4 |
+| [0014](0014-data-retention-classes-and-backups.md) | Data classes and retention | proposed | Lifetimes wait on D-11 (retention); S1b adds `ebay_quota_window` 90 d. MVP: purge of the worker's tables only; deletion, quota and audit retention deferred to Phase 1 S2. v2: auth tables (0038), market tables (0040) | Phase 1 entry |
+| [0015](0015-job-execution-idempotency-and-delivery.md) | Jobs, call claims, alert delivery | proposed | MVP: queue table, `poll_run` running rows and stale rule, relay as the one retry path for send. v2: payloads by search and product, market and category jobs, held re-queue (0037) | Phase 0 S4 |
+| [0016](0016-ebay-ingestion-feeds-and-call-budget.md) | Feeds and eBay call budget | proposed | v2: derived searches, monotonic ids, 2,500 planned calls, market calls shed first (0037, 0040) | Phase 0 exit or D-20 supply test |
+| [0017](0017-fair-value-and-tier-assignment.md) | Fair value and tiers | proposed | Waits on reference price, sold ratio, thresholds. v2: not built; market value `mv-1` instead (0040) | Phase 2 P2-4 |
 | [0018](0018-claude-data-flow-and-residency.md) | Claude data flow | proposed | Waits on GDPR work. MVP: the owner accepted on 2026-10-21 that screening runs before the D-18 pack is signed (Q1) | Phase 3b switch-on |
-| [0019](0019-listing-screening-pipeline.md) | Screening pipeline | proposed | Waits on per-listing failure rule. MVP: one stage, two paid attempts, failures alert as "not screened" | Phase 3a |
-| [0020](0020-risk-verdict-and-evidence-verification.md) | Risk verdict | proposed | MVP: model verdict plus code floors; a model-only block is emailed (Q7) | Phase 3a |
-| [0021](0021-authentication-email-one-time-codes.md) | Email one-time-code login | proposed | Dashboard on `deals.intra-ai.de` | Phase 1 S3 |
+| [0019](0019-listing-screening-pipeline.md) | Screening pipeline | proposed | Waits on per-listing failure rule. MVP: one stage, two paid attempts, failures alert as "not screened". v2: product-neutral prompt, `<product>` and `<listing>` elements (0037) | Phase 3a |
+| [0020](0020-risk-verdict-and-evidence-verification.md) | Risk verdict | proposed | MVP: model verdict plus code floors; a model-only block is emailed (Q7). v2: `mismatch` not emailed, injection floor (0037) | Phase 3a |
+| [0021](0021-authentication-email-one-time-codes.md) | Email one-time-code login | proposed | Dashboard on `deals.intra-ai.de`. v2: superseded by 0038 once 0038 is accepted | Phase 1 S3 |
 | [0022](0022-alert-email-through-amazon-ses.md) | Email through Amazon SES | proposed | Identity `alerts.intra-ai.de`, MAIL FROM `mail.alerts.intra-ai.de`; DMARC `p=none`, no `rua` (D-48). MVP: alert email over SMTP instead (0035) | Phase 0 S8 |
-| [0023](0023-testing-and-evaluation-strategy.md) | Testing strategy | proposed | Amended (S1b): OpenAPI file not committed, MSW deferred | Phase 0 S1b |
-| [0024](0024-observability.md) | Logs, metrics, Ops page | proposed | Ops alerts to Simon's mailbox | Phase 1 entry |
+| [0023](0023-testing-and-evaluation-strategy.md) | Testing strategy | proposed | Amended (S1b): OpenAPI file not committed, MSW deferred. v2: HTML page tests, component snapshots, Playwright flows (0039) | Phase 0 S1b |
+| [0024](0024-observability.md) | Logs, metrics, Ops page | proposed | Ops alerts to Simon's mailbox. v2: Overview and Budget pages replace the dashboard (0037) | Phase 1 entry |
 | [0025](0025-backups-and-restore-drill.md) | Backups, restore drill | proposed | Dump lifetime follows D-11 | Phase 1 entry |
 | [0026](0026-llm-evaluation-strategy.md) | LLM screener evaluation | proposed | Waits on PASS-rate target | Phase 3 build |
-| [0027](0027-buyer-status-and-seller-returns-rules.md) | Buyer profile, returns rules | proposed | `buyer_profile` company or private per watch, default company (D-04); company Medium/Medium provisional until § 307 BGB check | Phase 3a |
-| [0028](0028-screening-budget-and-model-selection.md) | Screening budget, model choice | proposed | Waits on review cadence, PASS rate. MVP: 40 calls and USD 2 a day in one reservation statement | Phase 3 model sweep |
-| [0029](0029-ci-cd-and-deploy.md) | CI/CD, deploy, rollback | proposed | Split from 0012; S1b adds the `.env` check, Postgres step and migrate step | Phase 0 S2 |
+| [0027](0027-buyer-status-and-seller-returns-rules.md) | Buyer profile, returns rules | proposed | `buyer_profile` company or private per watch, default company (D-04); company Medium/Medium provisional until § 307 BGB check. v2: per product (0037) | Phase 3a |
+| [0028](0028-screening-budget-and-model-selection.md) | Screening budget, model choice | proposed | Waits on review cadence, PASS rate. MVP: 40 calls and USD 2 a day in one reservation statement. v2: caps as settings under env ceilings, per-product share (0037) | Phase 3 model sweep |
+| [0029](0029-ci-cd-and-deploy.md) | CI/CD, deploy, rollback | proposed | Split from 0012; S1b adds the `.env` check, Postgres step and migrate step. v2 additions: deploy starts and checks `web`, new `.env` checks, rollback to Release 0 | Phase 0 S2 |
 | [0030](0030-heartbeats-and-external-probe.md) | Heartbeats, endpoint probe | proposed | Split from 0024 | Phase 0 S3 |
 | [0031](0031-deep-evaluation-revisions.md) | Deep-evaluation revisions | proposed | Changes the `deep` row of 0015 part B | Phase 3 slice 3.7 |
 | [0032](0032-auction-path.md) | Auction path | proposed | Waits on auction rules (D-36, D-41 to D-44) | Phase 4 S2a merge |
-| [0033](0033-calibration-and-config-change-process.md) | Calibration and config changes | proposed | Waits on metrics, labels, approver | First Phase 5 calibration |
+| [0033](0033-calibration-and-config-change-process.md) | Calibration and config changes | proposed | Waits on metrics, labels, approver. v2: product rules change in the form, with revisions (0037) | First Phase 5 calibration |
 | 0034 | Fair-value method v2 | — | Reserved | Only if 5A.8 changes the method |
-| [0035](0035-alert-email-over-smtp.md) | Alert email over SMTP (MVP) | proposed | Owner decision 2026-10-21; amends 0022 for the MVP and 0006 | MVP go-live |
-| [0036](0036-kleinanzeigen-saved-search-emails.md) | Kleinanzeigen alert emails | proposed | Emails only, read-only IMAP. Owner Simon; blocks no phase; settles when the MVP merges and the worker wiring starts; deadline: ISO date not set yet (Simon) | None |
+| [0035](0035-alert-email-over-smtp.md) | Alert email over SMTP (MVP) | proposed | Owner decision 2026-10-21; amends 0022 for the MVP and 0006. v2: sign-in mail from a separate mailbox (0038) | MVP go-live |
+| [0036](0036-kleinanzeigen-saved-search-emails.md) | Kleinanzeigen alert emails | proposed | Emails only, read-only IMAP. Owner Simon; blocks no phase; settles when the MVP merges and the worker wiring starts; deadline: ISO date not set yet (Simon). v2: its candidates get `candidate.listing_source`, saved searches map to `product_source` (0037; spec V10, not built) | None |
+| [0037](0037-products-as-data.md) | Products as data | proposed | Owner decisions 2026-10-22 (v2 spec section 12: 0, 6, 8, 9, 10). Supersedes 0010; amends 0004, 0009, 0015, 0016, 0019, 0020, 0024, 0027, 0028, 0033 | v2 step V1 |
+| [0038](0038-sign-in-with-email-codes.md) | Sign-in with email codes | proposed | Owner decisions 2026-10-22 (2, 3, 4, 5). Supersedes 0021; amends 0012, 0014, 0035 | v2 step V1 |
+| [0039](0039-admin-ui-hono-jsx-and-design-system.md) | Admin UI, Hono JSX, design system | proposed | Owner decisions 2026-10-22 (1, 11). Amends 0005, 0006, 0007, 0023 | v2 step V5a |
+| [0040](0040-market-value-from-asking-prices.md) | Market value from asking prices | proposed | Owner decision 2026-10-22 (7). Amends 0014, 0016, 0017 | v2 step V1 |
 
 Plan decisions 001 to 016 map to 0002, 0006/0007, 0017, 0018/0019, 0016, 0013, 0021, 0022, 0005, 0019/0004, 0019/0028, 0032, 0015, 0020, 0014/0025, 0010. The rest have none.
 

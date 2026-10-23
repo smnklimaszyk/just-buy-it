@@ -30,7 +30,7 @@ function attributeText(html: string): string {
 
 function listingHtml(listing: SyntheticListing, index: number, savedSearchId: string): string {
   const adId = listing.adId ?? `90000000${11 + index}`;
-  const titleHtml = listing.titleHtml ?? `Synthetic RTX 4090 Nummer ${index + 1}`;
+  const titleHtml = listing.titleHtml ?? `Synthetic Rennrad Nummer ${index + 1}`;
   const priceHtml = listing.priceHtml ?? "2.450 € VB";
   const imgSrc =
     listing.imgSrc === undefined
@@ -110,7 +110,7 @@ function encodedWord(text: string): string {
 // A whole message in the header order our server delivers: LMTP hop, our Authentication-Results,
 // our Postfix hop, then what the sender wrote. The body is 8bit UTF-8 HTML.
 export function buildAlertEmail(options: AlertEmailOptions = {}): string {
-  const subject = options.subject ?? "Neue Treffer zu deiner Suche „RTX 4090 Synthetik“";
+  const subject = options.subject ?? "Neue Treffer zu deiner Suche „Rennrad Synthetik“";
   const authenticationResults = options.authenticationResults ?? [AUTHENTICATION_RESULTS];
   const from = options.from ?? ["Kleinanzeigen <noreply@kleinanzeigen.de>"];
   const to = options.to ?? ["mailbox@example.invalid"];

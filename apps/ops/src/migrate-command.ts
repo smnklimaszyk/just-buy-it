@@ -1,6 +1,8 @@
 import { MigrateLockTimeoutError, type checkAppRole, type MigrateLog, type runMigrations } from "@ebay-sniper/db";
 import type {
+  bootstrapAdmins,
   checkDashboardRole,
+  checkWebRole,
   checkWorkerRole,
   migrateQueue,
   ServiceRole,
@@ -10,17 +12,20 @@ import { EnvError, type Env } from "./env.js";
 
 export type CommandLog = { info: MigrateLog; error: MigrateLog };
 
-// Runs on every deploy (sections 2.2 and 2.5). Under the migrate lock: the Drizzle migrations, the
-// passwords of app, worker and dashboard, then the pg-boss schema and queues. After it: a check as
-// each role. A failure stops the deploy before any container is replaced.
+// Runs on every deploy (sections 2.2 and 2.5, spec 2.10 and 7.8). Under the migrate lock: the
+// Drizzle migrations, the passwords of app, worker, dashboard and web, the pg-boss schema and
+// queues, then the bootstrap admins. After it: a check as each role. A failure stops the deploy
+// before any container is replaced.
 export async function runMigrateCommand(deps: {
   loadEnv: () => Env;
   runMigrations: typeof runMigrations;
   setRolePassword: typeof setRolePassword;
   migrateQueue: typeof migrateQueue;
+  bootstrapAdmins: typeof bootstrapAdmins;
   checkAppRole: typeof checkAppRole;
   checkWorkerRole: typeof checkWorkerRole;
   checkDashboardRole: typeof checkDashboardRole;
+  checkWebRole: typeof checkWebRole;
   log: CommandLog;
 }): Promise<number> {
   const passwords: string[] = [];
@@ -31,11 +36,13 @@ export async function runMigrateCommand(deps: {
       env.appRolePassword,
       env.workerRolePassword,
       env.dashboardRolePassword,
+      env.webRolePassword,
     );
     const roles: [ServiceRole, string][] = [
       ["app", env.appRolePassword],
       ["worker", env.workerRolePassword],
       ["dashboard", env.dashboardRolePassword],
+      ["web", env.webRolePassword],
     ];
     await deps.runMigrations({
       connectionString: env.databaseUrl,
@@ -51,6 +58,9 @@ export async function runMigrateCommand(deps: {
           schema_created: queue.schemaCreated,
           queues_created: queue.queuesCreated.length,
         });
+        // A count only: the log never carries a full address (spec 7.9).
+        const admins = await deps.bootstrapAdmins(client, env.bootstrapAdmins);
+        logStep("bootstrap_admins", { added: admins.added });
       },
     });
     await deps.checkAppRole(roleUrl(env.databaseUrl, "app", env.appRolePassword));
@@ -59,6 +69,8 @@ export async function runMigrateCommand(deps: {
     deps.log.info({ event: "migrate", step: "worker_role_check_passed" });
     await deps.checkDashboardRole(roleUrl(env.databaseUrl, "dashboard", env.dashboardRolePassword));
     deps.log.info({ event: "migrate", step: "dashboard_role_check_passed" });
+    await deps.checkWebRole(roleUrl(env.databaseUrl, "web", env.webRolePassword));
+    deps.log.info({ event: "migrate", step: "web_role_check_passed" });
     return 0;
   } catch (error) {
     const exitCode = exitCodeFor(error);

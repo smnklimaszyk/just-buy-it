@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { createClaudeScreener, type FetchFn } from "./adapter.js";
+import { createClaudeScreener, type FetchFn, type ScreeningCall } from "./adapter.js";
 import { ClaudeError } from "./failures.js";
 import { buildScreeningRequest } from "./request.js";
-import { SYSTEM_PROMPT } from "./prompt.v1.js";
+import { SYSTEM_PROMPT } from "./prompt.v2.js";
 import { ANSWER_JSON_SCHEMA, RISK_FLAGS } from "./schema.js";
 
 const API_KEY = "sk-ant-test-SENTINEL_KEY_51c9";
-const USER_MESSAGE = '<listing>\n{\n  "segment": "gpu_3090"\n}\n</listing>';
+const USER_MESSAGE = '<product>\n{"name":"Portrait lens"}\n</product>\n<listing>\n{\n  "title": "Objektiv 85mm"\n}\n</listing>';
+const CALL: ScreeningCall = { model: "claude-sonnet-5-5", effort: "medium", userMessage: USER_MESSAGE };
 
 const ANSWER = { verdict: "pass", product_match: "match", risk_flags: [], reason: "Card matches." };
 
@@ -45,7 +46,7 @@ const json = (body: unknown, status = 200, headers: Record<string, string> = {})
 describe("Claude adapter", () => {
   it("posts the section 5.3 body with no tools and no fallbacks", async () => {
     const { fetchFn, calls } = fakeFetch(() => json(messageBody()));
-    await createClaudeScreener({ apiKey: API_KEY, fetchFn }).screen(USER_MESSAGE);
+    await createClaudeScreener({ apiKey: API_KEY, fetchFn }).screen(CALL);
     expect(calls).toHaveLength(1);
     const [call] = calls;
     expect(call?.url).toBe("https://api.anthropic.com/v1/messages");
@@ -77,7 +78,7 @@ describe("Claude adapter", () => {
       { type: "text", text: JSON.stringify({ ...ANSWER, verdict: "PASS", risk_flags: ["Mining_History"] }) },
     ];
     const { fetchFn } = fakeFetch(() => json(messageBody({ content })));
-    const result = await createClaudeScreener({ apiKey: API_KEY, fetchFn }).screen(USER_MESSAGE);
+    const result = await createClaudeScreener({ apiKey: API_KEY, fetchFn }).screen(CALL);
     expect(result).toEqual({
       answer: { verdict: "pass", productMatch: "match", riskFlags: ["mining_history"], reason: "Card matches." },
       model: "claude-sonnet-5-5",
@@ -116,6 +117,24 @@ describe("Claude adapter", () => {
   ])("maps %s to schema_invalid, retried once, with usage", async (_case, content) => {
     const { fetchFn } = fakeFetch(() => json(messageBody({ content })));
     expect(await screenError(fetchFn)).toMatchObject({ code: "schema_invalid", retryable: true, usage: { outputTokens: 900 } });
+  });
+
+  it("sends the call's model and effort, prices the usage at that model, and refuses an answer from another one", async () => {
+    const haiku: ScreeningCall = { model: "claude-haiku-5-5", effort: "low", userMessage: USER_MESSAGE };
+    const answered = fakeFetch(() => json(messageBody({ model: "claude-haiku-5-5" })));
+    const result = await createClaudeScreener({ apiKey: API_KEY, fetchFn: answered.fetchFn }).screen(haiku);
+    expect(JSON.parse(String(answered.calls[0]?.init.body))).toMatchObject({
+      model: "claude-haiku-5-5",
+      output_config: { effort: "low" },
+    });
+    // 2,400 x 0.1 + 900 x 0.5 micro-USD.
+    expect(result).toMatchObject({ model: "claude-haiku-5-5", costMicroUsd: 690 });
+    // The Sonnet answer of messageBody() to a Haiku request: settings or the candidate asked for Haiku.
+    const other = fakeFetch(() => json(messageBody()));
+    const error: unknown = await createClaudeScreener({ apiKey: API_KEY, fetchFn: other.fetchFn })
+      .screen(haiku)
+      .catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: "unexpected_model", retryable: false, costMicroUsd: 690 });
   });
 
   it("refuses an answer from any other model as unexpected_model, never retried", async () => {
@@ -194,7 +213,7 @@ describe("Claude adapter", () => {
         init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
       });
     const deadline = new AbortController();
-    const pending = createClaudeScreener({ apiKey: API_KEY, fetchFn: hung }).screen(USER_MESSAGE, deadline.signal);
+    const pending = createClaudeScreener({ apiKey: API_KEY, fetchFn: hung }).screen(CALL, deadline.signal);
     deadline.abort();
     await expect(pending).rejects.toMatchObject({ code: "timeout", status: null });
   });
@@ -215,8 +234,7 @@ describe("Claude adapter", () => {
 
   it("sends no item ID, URL or seller username in the request body built from a listing that carries them", async () => {
     const source = {
-      segment: "gpu_4090" as const,
-      title: "RTX 4090 Gaming OC",
+      title: "Espressomaschine Siebträger Dualboiler",
       condition: "Gebraucht",
       conditionDescription: null,
       priceCents: 125_000,
@@ -237,10 +255,18 @@ describe("Claude adapter", () => {
       image: { imageUrl: "https://i.ebayimg.com/SENTINEL_IMAGE.jpg" },
     };
     const { fetchFn, calls } = fakeFetch(() => json(messageBody()));
-    const { userMessage } = buildScreeningRequest(source, new Date("2026-10-21T12:00:00.000Z"));
-    await createClaudeScreener({ apiKey: API_KEY, fetchFn }).screen(userMessage);
+    const product = {
+      name: "Espresso machine",
+      description: "A dual-boiler espresso machine.",
+      must_contain: [["espresso", "espressomaschine"]],
+      must_not_contain: [],
+      conditions: ["used" as const],
+      limit_eur: 1280,
+    };
+    const { userMessage } = buildScreeningRequest(product, source, new Date("2026-10-21T12:00:00.000Z"));
+    await createClaudeScreener({ apiKey: API_KEY, fetchFn }).screen({ ...CALL, userMessage });
     const body = String(calls[0]?.init.body);
-    expect(body).toContain("RTX 4090 Gaming OC");
+    expect(body).toContain("Espressomaschine Siebträger Dualboiler");
     for (const sentinel of ["SENTINEL_SELLER", "SENTINEL_ITEM", "SENTINEL_LEGACY", "SENTINEL_IMAGE", "https://", API_KEY]) {
       expect(body).not.toContain(sentinel);
     }
@@ -249,7 +275,7 @@ describe("Claude adapter", () => {
 
 async function screenError(fetchFn: FetchFn, timeoutMs?: number): Promise<ClaudeError> {
   const error: unknown = await createClaudeScreener({ apiKey: API_KEY, fetchFn, timeoutMs })
-    .screen(USER_MESSAGE)
+    .screen(CALL)
     .then(
       () => null,
       (e: unknown) => e,

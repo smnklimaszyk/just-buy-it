@@ -94,8 +94,6 @@ const env = {
   GIT_SHA: "0123456789abcdef0123456789abcdef01234567",
   DATABASE_URL: "postgres://app:apppass@postgres:5432/ebay_sniper",
   DELETION_PROBE_CODE: "Pr0be_code-0123456789abcdefghijABCDEFGHI",
-  DASHBOARD_PORT: "3001",
-  DASHBOARD_DATABASE_URL: "postgres://dashboard:dashpass@postgres:5432/ebay_sniper",
 };
 
 beforeAll(async () => {
@@ -129,40 +127,16 @@ const serverOn = (port: number): FakeServer => {
 };
 
 describe("server wiring", () => {
-  it("creates the app pool and a separate two-connection dashboard pool", () => {
+  it("creates only the app pool and one listener, on PORT: the MVP dashboard is gone (spec 10.4)", () => {
     expect(fakes.pools.map((p) => p.options)).toEqual([
       { connectionString: env.DATABASE_URL, max: 3, applicationName: "ebay-sniper-server", onError: expect.any(Function) },
-      {
-        connectionString: env.DASHBOARD_DATABASE_URL,
-        max: 2,
-        applicationName: "ebay-sniper-dashboard",
-        onError: expect.any(Function),
-      },
     ]);
-    expect(poolFor(env.DASHBOARD_DATABASE_URL)).toBeDefined();
+    expect(fakes.servers.map((s) => [s.port, s.host])).toEqual([[3000, "0.0.0.0"]]);
   });
 
-  it("serves the dashboard on its own listener, reading only through the dashboard pool", async () => {
-    const dashboard = serverOn(3001);
-    const appPool = poolFor(env.DATABASE_URL);
-    const dashboardPool = poolFor(env.DASHBOARD_DATABASE_URL);
-    appPool.statements.length = 0;
-
-    const health = await dashboard.fetch(new Request("http://127.0.0.1:3001/healthz"));
-    const overview = await dashboard.fetch(new Request("http://127.0.0.1:3001/"));
-
-    expect(dashboard.host).toBe("0.0.0.0");
-    expect(await health.text()).toBe(`{"sha":"${env.GIT_SHA}"}`);
-    expect(overview.status).toBe(200);
-    expect(dashboardPool.statements.some((sql) => sql.includes("app.worker_status"))).toBe(true);
-    expect(appPool.statements).toEqual([]);
-  });
-
-  it("keeps the dashboard paths off the public listener, whose deletion path writes through the app pool", async () => {
+  it("answers the old dashboard paths with 404, and its deletion path writes through the app pool", async () => {
     const publicServer = serverOn(3000);
     const appPool = poolFor(env.DATABASE_URL);
-    const dashboardPool = poolFor(env.DASHBOARD_DATABASE_URL);
-    dashboardPool.statements.length = 0;
 
     for (const path of ["/", "/candidates", "/alerts", "/blocked", "/screenings", "/rejections", "/prices"]) {
       expect((await publicServer.fetch(new Request(`https://deals.intra-ai.de${path}`))).status).toBe(404);
@@ -173,11 +147,10 @@ describe("server wiring", () => {
 
     expect(probe.status).toBe(200);
     await vi.waitFor(() => expect(appPool.statements.some((sql) => sql.includes("probe_seen"))).toBe(true));
-    expect(dashboardPool.statements).toEqual([]);
   });
 
   // Last: the shutdown closes everything the tests above use.
-  it("closes both listeners and ends both pools on SIGTERM", async () => {
+  it("closes the listener and ends the pool on SIGTERM", async () => {
     const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
     const shutdown = fakes.signals.get("SIGTERM");
 
@@ -185,8 +158,6 @@ describe("server wiring", () => {
 
     await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(0));
     expect(serverOn(3000).closed).toBe(true);
-    expect(serverOn(3001).closed).toBe(true);
     expect(poolFor(env.DATABASE_URL).ended).toBe(true);
-    expect(poolFor(env.DASHBOARD_DATABASE_URL).ended).toBe(true);
   });
 });

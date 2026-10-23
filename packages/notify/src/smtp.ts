@@ -21,10 +21,12 @@ export type MailTransport = {
 
 export type CreateTransportFn = (options: TransportOptions) => MailTransport;
 
-// One message per delivery. `to` is the delivery's recipient (ALERT_TO).
+// One message per delivery. `to` is the delivery's recipient (ALERT_TO); `bcc` the product's
+// active people, read at send time (spec 9), so no recipient sees another's address.
 export type OutgoingEmail = {
   deliveryId: string;
   to: string;
+  bcc?: readonly string[];
   subject: string;
   text: string;
   html: string;
@@ -92,6 +94,7 @@ export function createSmtpMailer(config: SmtpConfig, createTransportFn: CreateTr
           // The parsed object, so nodemailer encodes the display name (section 6.5).
           from: { name: config.from.name, address: config.from.address },
           to: email.to,
+          ...(email.bcc === undefined || email.bcc.length === 0 ? {} : { bcc: [...email.bcc] }),
           subject: email.subject,
           text: email.text,
           html: email.html,

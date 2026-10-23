@@ -80,9 +80,9 @@ describe("startQueue (section 2.2)", () => {
     const database = await installedDatabase();
     const queue = await startQueue({ connectionString: workerUrl(database), onError: (error) => errors.push(error) });
     try {
-      expect(await queue.send("poll", { feedId: "gpu" })).toEqual(expect.any(String));
-      expect(await queue.send("poll", { feedId: "gpu" })).toBeNull();
-      expect(await queue.send("poll", { feedId: "ram" })).toEqual(expect.any(String));
+      expect(await queue.send("poll", { searchId: "s1" })).toEqual(expect.any(String));
+      expect(await queue.send("poll", { searchId: "s1" })).toBeNull();
+      expect(await queue.send("poll", { searchId: "s2" })).toEqual(expect.any(String));
       expect(await queue.send("poll-tick", {})).toEqual(expect.any(String));
       expect(await queue.send("poll-tick", {})).toBeNull();
       const withTitle = { listingId: LISTING_ID, title: "RTX 3090" };
@@ -92,8 +92,8 @@ describe("startQueue (section 2.2)", () => {
         "SELECT name, data, singleton_key FROM pgboss.job ORDER BY name, singleton_key",
       );
       expect(jobs.rows).toEqual([
-        { name: "poll", data: { feedId: "gpu" }, singleton_key: "gpu" },
-        { name: "poll", data: { feedId: "ram" }, singleton_key: "ram" },
+        { name: "poll", data: { searchId: "s1" }, singleton_key: "s1" },
+        { name: "poll", data: { searchId: "s2" }, singleton_key: "s2" },
         { name: "poll-tick", data: {}, singleton_key: null },
       ]);
     } finally {
@@ -112,6 +112,8 @@ describe("startQueue (section 2.2)", () => {
 
       const schedules = await database.pool.query("SELECT name, cron, timezone, data FROM pgboss.schedule ORDER BY name");
       expect(schedules.rows).toEqual([
+        { name: "held-requeue", cron: "5 22,23 * * *", timezone: "UTC", data: {} },
+        { name: "market-nightly", cron: "0 2 * * *", timezone: "UTC", data: {} },
         { name: "poll-tick", cron: "* * * * *", timezone: "UTC", data: {} },
         { name: "purge", cron: "*/15 * * * *", timezone: "UTC", data: {} },
         { name: "relay", cron: "* * * * *", timezone: "UTC", data: {} },

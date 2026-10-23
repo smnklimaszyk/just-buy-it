@@ -10,7 +10,9 @@ import {
 import {
   QueueSchemaVersionError,
   RoleCheckError,
+  type bootstrapAdmins,
   type checkDashboardRole,
+  type checkWebRole,
   type checkWorkerRole,
   type migrateQueue,
   type setRolePassword,
@@ -22,11 +24,14 @@ const DATABASE_URL = "postgres://ebay_sniper:sentinel-password-4711@postgres:543
 const APP_PASSWORD = "5e171e1a".repeat(8);
 const WORKER_PASSWORD = "5e171e1b".repeat(8);
 const DASHBOARD_PASSWORD = "5e171e1c".repeat(8);
+const WEB_PASSWORD = "5e171e1d".repeat(8);
 const ENV = {
   databaseUrl: DATABASE_URL,
   appRolePassword: APP_PASSWORD,
   workerRolePassword: WORKER_PASSWORD,
   dashboardRolePassword: DASHBOARD_PASSWORD,
+  webRolePassword: WEB_PASSWORD,
+  bootstrapAdmins: ["info@intra-ai.de"],
 };
 
 type LogEntry = Parameters<MigrateLog>[0];
@@ -42,6 +47,8 @@ type Fakes = {
   checkAppRole?: typeof checkAppRole;
   checkWorkerRole?: typeof checkWorkerRole;
   checkDashboardRole?: typeof checkDashboardRole;
+  checkWebRole?: typeof checkWebRole;
+  bootstrapAdmins?: typeof bootstrapAdmins;
 };
 
 function setup(fakes: Fakes = {}) {
@@ -84,13 +91,21 @@ function setup(fakes: Fakes = {}) {
       calls.push("checkDashboardRole");
       return (fakes.checkDashboardRole ?? (async () => undefined))(url);
     }),
+    checkWebRole: vi.fn<typeof checkWebRole>(async (url) => {
+      calls.push("checkWebRole");
+      return (fakes.checkWebRole ?? (async () => undefined))(url);
+    }),
+    bootstrapAdmins: vi.fn<typeof bootstrapAdmins>(async (client, emails) => {
+      calls.push("bootstrapAdmins");
+      return (fakes.bootstrapAdmins ?? (async () => ({ added: 1 })))(client, emails);
+    }),
     log,
   };
   return { lines, calls, deps };
 }
 
 describe("runMigrateCommand", () => {
-  it("migrates, sets the three role passwords and installs pg-boss under the migrate lock, then checks each role", async () => {
+  it("migrates, sets the four role passwords and installs pg-boss under the migrate lock, then checks each role", async () => {
     const { lines, calls, deps } = setup();
 
     const code = await runMigrateCommand(deps);
@@ -101,16 +116,20 @@ describe("runMigrateCommand", () => {
       "setRolePassword app",
       "setRolePassword worker",
       "setRolePassword dashboard",
+      "setRolePassword web",
       "migrateQueue",
+      "bootstrapAdmins",
       "checkAppRole",
       "checkWorkerRole",
       "checkDashboardRole",
+      "checkWebRole",
     ]);
     expect(deps.runMigrations).toHaveBeenCalledWith(expect.objectContaining({ connectionString: DATABASE_URL }));
     expect(deps.setRolePassword.mock.calls).toEqual([
       [DATABASE_URL, "app", APP_PASSWORD],
       [DATABASE_URL, "worker", WORKER_PASSWORD],
       [DATABASE_URL, "dashboard", DASHBOARD_PASSWORD],
+      [DATABASE_URL, "web", WEB_PASSWORD],
     ]);
     expect(deps.migrateQueue).toHaveBeenCalledWith(MIGRATE_CLIENT);
     expect(deps.checkAppRole).toHaveBeenCalledWith(`postgres://app:${APP_PASSWORD}@postgres:5432/ebay_sniper`);
@@ -123,12 +142,52 @@ describe("runMigrateCommand", () => {
       "app_role_password_set",
       "worker_role_password_set",
       "dashboard_role_password_set",
+      "web_role_password_set",
       "pgboss_installed",
+      "bootstrap_admins",
       "app_role_check_passed",
       "worker_role_check_passed",
       "dashboard_role_check_passed",
+      "web_role_check_passed",
     ]);
     expect(lines).toContainEqual({ event: "migrate", step: "pgboss_installed", version: 46, schema_created: true, queues_created: 2 });
+  });
+
+  it("sets the web password, adds the bootstrap admins after pg-boss under the migrate lock, and checks web last", async () => {
+    const { lines, calls, deps } = setup();
+
+    expect(await runMigrateCommand(deps)).toBe(0);
+    expect(calls.slice(calls.indexOf("setRolePassword dashboard"))).toEqual([
+      "setRolePassword dashboard",
+      "setRolePassword web",
+      "migrateQueue",
+      "bootstrapAdmins",
+      "checkAppRole",
+      "checkWorkerRole",
+      "checkDashboardRole",
+      "checkWebRole",
+    ]);
+    expect(deps.setRolePassword).toHaveBeenCalledWith(DATABASE_URL, "web", WEB_PASSWORD);
+    expect(deps.bootstrapAdmins).toHaveBeenCalledWith(MIGRATE_CLIENT, ["info@intra-ai.de"]);
+    expect(deps.checkWebRole).toHaveBeenCalledWith(`postgres://web:${WEB_PASSWORD}@postgres:5432/ebay_sniper`);
+    // A count, never the addresses: the log must not carry a full address (spec 7.9).
+    expect(lines).toContainEqual({ event: "migrate", step: "bootstrap_admins", added: 1 });
+    expect(JSON.stringify(lines)).not.toContain("info@intra-ai.de");
+    expect(lines.at(-1)).toEqual({ event: "migrate", step: "web_role_check_passed" });
+  });
+
+  it("exits 1 without the role checks when adding the bootstrap admins fails, and logs no address", async () => {
+    const { lines, calls, deps } = setup({
+      bootstrapAdmins: async () => {
+        throw new Error('relation "auth.app_user" does not exist');
+      },
+    });
+
+    expect(await runMigrateCommand(deps)).toBe(1);
+    expect(calls.filter((call) => call.startsWith("check"))).toEqual([]);
+    expect(lines).toContainEqual(expect.objectContaining({ step: "failed", exit_code: 1, err_name: "Error" }));
+    expect(lines).not.toContainEqual(expect.objectContaining({ step: "bootstrap_admins" }));
+    expect(JSON.stringify(lines)).not.toContain("info@intra-ai.de");
   });
 
   it("checks each role on the same host, port and database as DATABASE_URL", async () => {
@@ -136,13 +195,14 @@ describe("runMigrateCommand", () => {
     deps.loadEnv = () => ({ ...ENV, databaseUrl: "postgresql://ebay_sniper:pw@db.internal:6543/other_db?sslmode=disable" });
 
     expect(await runMigrateCommand(deps)).toBe(0);
-    const urls = [deps.checkAppRole, deps.checkWorkerRole, deps.checkDashboardRole].map(
+    const urls = [deps.checkAppRole, deps.checkWorkerRole, deps.checkDashboardRole, deps.checkWebRole].map(
       (check) => new URL(String(check.mock.calls[0]?.[0])),
     );
     expect(urls.map((url) => [url.username, url.password])).toEqual([
       ["app", APP_PASSWORD],
       ["worker", WORKER_PASSWORD],
       ["dashboard", DASHBOARD_PASSWORD],
+      ["web", WEB_PASSWORD],
     ]);
     for (const url of urls) {
       expect(url.protocol).toBe("postgresql:");
@@ -193,6 +253,11 @@ describe("runMigrateCommand", () => {
       "checkDashboardRole",
       new RoleCheckError("dashboard role check failed at insert app.feed: expected 42501, got success"),
       ["checkAppRole", "checkWorkerRole", "checkDashboardRole"],
+    ],
+    [
+      "checkWebRole",
+      new RoleCheckError("web role check failed at delete auth.auth_event: expected 42501, got success"),
+      ["checkAppRole", "checkWorkerRole", "checkDashboardRole", "checkWebRole"],
     ],
   ] as const)("exits 1 with the failed step in the message when %s fails", async (name, failure, checks) => {
     const { lines, calls, deps } = setup({
@@ -282,12 +347,13 @@ describe("runMigrateCommand", () => {
     ["checkAppRole", { checkAppRole: async (url: string) => Promise.reject(new Error(`could not connect to ${url}`)) }],
     ["checkWorkerRole", { checkWorkerRole: async (url: string) => Promise.reject(new Error(`could not connect to ${url}`)) }],
     ["checkDashboardRole", { checkDashboardRole: async (url: string) => Promise.reject(new Error(`could not connect to ${url}`)) }],
+    ["checkWebRole", { checkWebRole: async (url: string) => Promise.reject(new Error(`could not connect to ${url}`)) }],
   ])("never logs a password when a %s error quotes it", async (_label, fakes) => {
     const { lines, deps } = setup(fakes);
 
     expect(await runMigrateCommand(deps)).toBe(1);
     const logged = JSON.stringify(lines);
-    for (const secret of ["sentinel-password-4711", APP_PASSWORD, WORKER_PASSWORD, DASHBOARD_PASSWORD]) {
+    for (const secret of ["sentinel-password-4711", APP_PASSWORD, WORKER_PASSWORD, DASHBOARD_PASSWORD, WEB_PASSWORD]) {
       expect(logged).not.toContain(secret);
     }
   });

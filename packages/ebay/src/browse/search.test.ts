@@ -299,7 +299,25 @@ describe("searchItems parsing", () => {
       warnings: [],
       items: [item],
       malformedItems: 0,
+      categories: [],
     });
+  });
+
+  it("returns the category refinements eBay sent, as data", async () => {
+    const ebay = fakeEbay(() =>
+      Response.json({
+        total: 2,
+        limit: 1,
+        offset: 0,
+        refinement: { categoryDistributions: [{ categoryId: "177831", categoryName: "Rennräder", matchCount: 2 }] },
+      }),
+    );
+    const client = browseClient(ebay);
+
+    const page = await client.searchItems({ q: "rennrad", limit: 1, fieldgroups: ["CATEGORY_REFINEMENTS"] }, call);
+
+    expect(page.categories).toEqual([{ categoryId: "177831", categoryName: "Rennräder", matchCount: 2 }]);
+    expect(page.items).toEqual([]);
   });
 
   it("skips and counts an item that fails the schema", async () => {

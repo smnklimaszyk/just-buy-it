@@ -1,0 +1,40 @@
+{
+  "id": "29-pram-sun-canopy-only",
+  "set": "v2",
+  "group": "scam",
+  "product_kind": "other",
+  "product": {
+    "name": "Bugaboo Fox 3 pram",
+    "description": "A used Bugaboo Fox 3 pram with chassis, bassinet and seat unit, complete and working.",
+    "must_contain": [["bugaboo"], ["fox 3", "fox3"]],
+    "must_not_contain": ["defekt"],
+    "conditions": ["used"],
+    "limit_eur": 560,
+    "market_value_eur": 700,
+    "market_value_status": "ok"
+  },
+  "listing": {
+    "title": "Bugaboo Fox 3 Sonnendach Breezy Grau mit Regenverdeck",
+    "condition": "Gebraucht",
+    "condition_description": "Kaum benutzt.",
+    "price_eur": 45,
+    "shipping_eur": 5.49,
+    "landed_eur": 50.49,
+    "owner_max_eur": 560,
+    "percent_of_max": 9,
+    "seller": { "feedback_score": 73, "feedback_percent": 100, "account_type": "private" },
+    "returns": { "accepted": false, "period_days": null },
+    "item_location_country": "DE",
+    "listing_age_hours": 15,
+    "item_specifics": [
+      { "name": "Marke", "value": "Bugaboo" },
+      { "name": "Kompatibles Modell", "value": "Fox 3" },
+      { "name": "Produktart", "value": "Sonnendach" }
+    ],
+    "image_count": 4,
+    "description": "Breezy-Sonnendach in Grau für den Bugaboo Fox 3, dazu das passende Regenverdeck. Beides kaum benutzt. Der Kinderwagen selbst wird nicht verkauft, nur das Zubehör. Versand als Päckchen.",
+    "rule_flags": [],
+    "code_signals": []
+  },
+  "expected": { "verdict_not": ["pass"], "product_match_in": ["mismatch"] }
+}

@@ -2,19 +2,21 @@ import {
   claimCandidate,
   confirmListings,
   countCandidatesSince,
-  feedHasSeenItems,
   finishPollRun,
   getSeenItems,
   insertCandidate,
   insertClassifierSamples,
   insertListing,
   insertPriceSamples,
-  listFeeds,
-  listSegmentRules,
+  listProducts,
+  loadSearch,
+  loadSettings,
+  okMarketValuesBetween,
   overflowPagesSince,
   startPollRun,
   upsertListingContent,
   upsertSeenItems,
+  type CandidateProductFields,
   type ClassifierSampleRow,
   type DbPool,
   type ListingContentInput,
@@ -22,23 +24,30 @@ import {
   type PollRunStart,
   type PriceSampleRow,
   type Queryable,
+  type SearchRow,
   type SeenItemSighting,
+  type StoredProduct,
 } from "@ebay-sniper/db";
 import type { JobHandler, JobQueue } from "@ebay-sniper/db/queue";
 import {
-  classifyListing,
+  conditionGroupOf,
   decideSighting,
+  MARKET_VALUE_MAX_AGE_MS,
+  matchListing,
   nextPageDecision,
-  pollPriceFilter,
+  OVERFLOW_PAGES_PER_SEARCH,
+  resolveLimit,
   startOfBerlinDay,
   toListingCandidate,
-  type ClassifyResult,
   type Clock,
-  type FeedId,
+  type ConditionGroup,
+  type LimitResolution,
   type ListingCandidate,
+  type MarketValueRef,
+  type MatchProduct,
+  type MatchResult,
   type RunStatus,
-  type Segment,
-  type SegmentRule,
+  type SettingsEnv,
 } from "@ebay-sniper/domain";
 import {
   buildFeedSearch,
@@ -57,7 +66,8 @@ export type LogFn = (entry: Record<string, unknown>) => void;
 export type BrowseSearch = (request: BrowseSearchRequest, call: BrowseCallContext) => Promise<BrowseSearchPage>;
 
 // What the poll and sweep handlers need. The search is built per run on a reservation the run
-// counts, so poll_run.calls is every reserved attempt, retries included.
+// counts, so poll_run.calls is every reserved attempt, retries included. settingsEnv bounds the
+// settings read at the start of each job (spec 2.5, 9).
 export type SearchDeps = {
   pool: DbPool;
   queue: Pick<JobQueue, "send">;
@@ -66,10 +76,11 @@ export type SearchDeps = {
   createSearch: (reserve: ReserveEbayCall) => BrowseSearch;
   itemKey: ItemKeyFn;
   postalCode: string;
+  settingsEnv: SettingsEnv;
   log: { info: LogFn; warn: LogFn };
 };
 
-// Polls and sweeps are the standard class: they stop at 3,500 used units (section 3.4).
+// Polls and sweeps are the standard class: they stop at 3,500 used units (spec 5.4).
 const STANDARD_MIN_LEFT = 1500;
 
 // The statements of fn run on one client inside BEGIN and COMMIT; a throw rolls them back.
@@ -98,6 +109,8 @@ type RunCounts = {
   malformed: number;
   newItems: number;
   candidates: number;
+  // Listings more than one product matched (spec 3.4); logged, poll_run has no column for it.
+  ambiguous: number;
   capReached: boolean;
   warningIds: Set<number>;
   calls: number;
@@ -108,12 +121,14 @@ export type SearchRun = {
   fetch(request: BrowseSearchRequest, purpose: "poll" | "sweep"): Promise<BrowseSearchPage>;
 };
 
-// Section 2.3: the run row is inserted as running before the first request and finished in finally.
+// The run row is inserted as running before the first request and finished in finally. A null
+// body records the run as paused and sends nothing: the search or product is gone, retired,
+// paused or archived since the job was queued (spec 9).
 export async function trackRun(
   deps: SearchDeps,
   start: PollRunStart,
-  options: { enabled: boolean; signal: AbortSignal; logFields: Record<string, unknown> },
-  body: (run: SearchRun) => Promise<void>,
+  options: { signal: AbortSignal; logFields: Record<string, unknown> },
+  body: ((run: SearchRun) => Promise<void>) | null,
 ): Promise<void> {
   const { signal } = options;
   const runId = await startPollRun(deps.pool, start);
@@ -123,6 +138,7 @@ export async function trackRun(
     malformed: 0,
     newItems: 0,
     candidates: 0,
+    ambiguous: 0,
     capReached: false,
     warningIds: new Set(),
     calls: 0,
@@ -145,13 +161,12 @@ export async function trackRun(
     },
   };
 
-  // A feed or rule paused after the job was queued is recorded as paused and sends nothing.
-  let status: Exclude<RunStatus, "running"> = options.enabled ? "ok" : "paused";
+  let status: Exclude<RunStatus, "running"> = body ? "ok" : "paused";
   let errorKind: PollRunErrorKind | null = null;
   let thrown: unknown;
   let rethrow = false;
   try {
-    if (options.enabled) await body(run);
+    if (body) await body(run);
   } catch (error) {
     ({ status, errorKind } = failureOf(error, signal));
     thrown = error;
@@ -187,6 +202,7 @@ export async function trackRun(
       malformed: counts.malformed,
       new_items: counts.newItems,
       candidates: counts.candidates,
+      ambiguous: counts.ambiguous,
       cap_reached: counts.capReached,
       warning_ids: warningIds,
       calls: counts.calls,
@@ -215,31 +231,14 @@ function failureOf(error: unknown, signal: AbortSignal): Failure {
   return { status: "error", errorKind: "db" };
 }
 
-export type RulesBySegment = Record<Segment, SegmentRule>;
-
-// Migration 0006 seeds a rule for every segment; a missing row stops the run instead of
-// classifying against nothing.
-export function rulesBySegment(rules: readonly SegmentRule[]): RulesBySegment {
-  const rule = (segment: Segment): SegmentRule => {
-    const found = rules.find((r) => r.segment === segment);
-    if (found === undefined) throw new Error(`segment ${segment} has no rule`);
-    return found;
-  };
-  return {
-    gpu_3090: rule("gpu_3090"),
-    gpu_3090ti: rule("gpu_3090ti"),
-    gpu_4090: rule("gpu_4090"),
-    ram_ddr4: rule("ram_ddr4"),
-    ram_ddr5: rule("ram_ddr5"),
-    pc_4090: rule("pc_4090"),
-  };
-}
-
+// What a page is matched against. feedId is what v2 writes into feed_id of seen_item, listing,
+// candidate and poll_run: the search id for a poll, the product key for a sweep.
 export type PageContext = {
-  feedId: FeedId;
+  feedId: string;
   source: "poll" | "sweep";
-  baseline: boolean;
-  rules: RulesBySegment;
+  // At least one; active or paused. A paused product records sightings and makes no candidates.
+  products: readonly StoredProduct[];
+  lowFeedbackBelow: number;
   now: Date;
 };
 
@@ -247,13 +246,53 @@ type Sighting = {
   key: ItemKey;
   summary: ItemSummary;
   listing: ListingCandidate | null;
-  classification: ClassifyResult;
 };
 
-const NOT_EUR: ClassifyResult = { outcome: "rejected", reason: "not_eur", segment: null, totalGb: null };
+const NOT_EUR: MatchResult = {
+  productKey: null,
+  outcome: "not_eur",
+  flags: [],
+  unitTotal: null,
+  conditionGroup: null,
+  ambiguous: false,
+};
 
-// Section 3.2 for one page: every sighting is written in one transaction (seen_item, price and
-// classifier samples, confirmations). Returns whether every item was unseen before this page.
+// The condition groups a product watches, each with its limit for one first-sighting time.
+type ResolvedProduct = { product: StoredProduct; match: MatchProduct; limits: Map<ConditionGroup, LimitResolution> };
+
+export function conditionGroups(product: StoredProduct): ConditionGroup[] {
+  const groups = product.rules.conditionIds.map(conditionGroupOf).filter((group) => group !== null);
+  return [...new Set(groups)];
+}
+
+// Spec 6.4: the limit of each watched group for a listing first seen at `at`, seen again `now`.
+function resolveProducts(
+  products: readonly StoredProduct[],
+  values: Map<string, MarketValueRef[]>,
+  at: Date,
+  now: Date,
+): ResolvedProduct[] {
+  return products.map((product) => {
+    const limitProduct = { ...product.rules, matchVersion: product.matchVersion };
+    const limits = new Map(
+      conditionGroups(product).map((group) => [group, resolveLimit(limitProduct, group, values.get(product.id) ?? [], at, now)] as const),
+    );
+    return { product, limits, match: { key: product.key, ...product.rules, limits: Object.fromEntries(limits) } };
+  });
+}
+
+type NewCandidate = Sighting & {
+  listing: ListingCandidate;
+  product: StoredProduct;
+  match: MatchResult;
+  productFields: CandidateProductFields;
+  // The first sighting, the `at` of the limit (spec 6.4), so enrich and screen resolve it alike.
+  firstSeenAt: Date;
+};
+
+// One page: every sighting is matched against the page's products and written in one transaction
+// (seen_item, price and classifier samples, confirmations). Returns whether every item was unseen
+// before this page.
 export async function processPage(
   deps: SearchDeps,
   run: SearchRun,
@@ -270,9 +309,7 @@ export async function processPage(
     }
     const key = deps.itemKey(legacyItemId);
     if (sightings.has(key.itemKey)) continue;
-    const listing = parsed.ok ? parsed.listing : null;
-    const classification = listing ? classifyListing(listing, ctx.feedId, ctx.rules) : NOT_EUR;
-    sightings.set(key.itemKey, { key, summary, listing, classification });
+    sightings.set(key.itemKey, { key, summary, listing: parsed.ok ? parsed.listing : null });
   }
   run.counts.items += sightings.size;
 
@@ -280,56 +317,91 @@ export async function processPage(
   const firstSightings = [...sightings.values()].filter((s) => !existing.has(s.key.itemKey));
   run.counts.newItems += firstSightings.length;
 
+  // A listing's limit is the one at its first sighting (spec 6.4).
+  const firstSeen = (itemKey: string): Date => existing.get(itemKey)?.firstSeenAt ?? ctx.now;
+  const oldest = Math.min(ctx.now.getTime(), ...[...existing.values()].map((state) => state.firstSeenAt.getTime()));
+  const values = await okMarketValuesBetween(
+    deps.pool,
+    ctx.products.map((product) => product.id),
+    new Date(oldest - MARKET_VALUE_MAX_AGE_MS),
+    ctx.now,
+  );
+
   const seen: SeenItemSighting[] = [];
   const prices: PriceSampleRow[] = [];
+  const samples: ClassifierSampleRow[] = [];
   const toCandidates: NewCandidate[] = [];
-  // Candidates per segment this Berlin day: committed ones (earlier pages and runs included), plus
+  // Candidates per product this Berlin day: committed ones (earlier pages and runs included), plus
   // the ones this page makes.
-  const today = new Map<Segment, number>();
+  const today = new Map<string, number>();
   for (const sighting of sightings.values()) {
-    const { key, listing, classification } = sighting;
-    const segment = classification.segment;
+    const { key, listing } = sighting;
     const before = existing.get(key.itemKey);
-    const candidatesToday = segment
-      ? (today.get(segment) ?? (await countCandidatesSince(deps.pool, segment, startOfBerlinDay(ctx.now))))
+    const resolved = resolveProducts(ctx.products, values, firstSeen(key.itemKey), ctx.now);
+    const match = listing
+      ? matchListing(listing, resolved.map((r) => r.match), { lowFeedbackBelow: ctx.lowFeedbackBelow })
+      : NOT_EUR;
+    if (match.ambiguous) run.counts.ambiguous += 1;
+    const chosen = resolved.find((r) => r.product.key === match.productKey);
+    const productKey = chosen?.product.key ?? null;
+    const candidatesToday = productKey
+      ? (today.get(productKey) ?? (await countCandidatesSince(deps.pool, productKey, startOfBerlinDay(ctx.now))))
       : 0;
     const decision = decideSighting({
       source: ctx.source,
-      baseline: ctx.baseline,
-      existing: before ? { outcome: before.outcome, isCandidate: before.candidateAt !== null } : null,
+      existing: before ? { outcome: before.outcome, isCandidate: before.candidateAt !== null, productKey: before.segment } : null,
       itemCreationAt: listing?.itemCreationAt ?? null,
       now: ctx.now,
-      classification,
+      match: { outcome: match.outcome, productKey },
+      product: chosen
+        ? { status: chosen.product.rules.status, watchFrom: chosen.product.watchFrom, candidateCapPerDay: chosen.product.rules.candidateCapPerDay }
+        : null,
       candidatesToday,
-      candidateCapPerDay: segment ? ctx.rules[segment].candidateCapPerDay : 0,
-      segmentEnabled: segment ? ctx.rules[segment].enabled : true,
     });
-    if (segment) today.set(segment, candidatesToday + (decision.makeCandidate ? 1 : 0));
-    seen.push({ ...key, feedId: ctx.feedId, segment, outcome: decision.outcome, seenAt: ctx.now });
-    if (decision.priceSample && segment && listing) {
+    if (productKey) today.set(productKey, candidatesToday + (decision.makeCandidate ? 1 : 0));
+    seen.push({ ...key, feedId: ctx.feedId, segment: productKey, outcome: decision.outcome, seenAt: ctx.now });
+    if (decision.priceSample && productKey && listing) {
       prices.push({
-        segment,
+        segment: productKey,
         feedId: ctx.feedId,
         priceCents: listing.priceCents,
         shippingCents: listing.shippingCents,
         landedCents: listing.landedCents,
-        totalGb: classification.totalGb,
+        totalGb: match.unitTotal,
         seenAt: ctx.now,
       });
     }
-    if (decision.makeCandidate && segment && listing) toCandidates.push({ ...sighting, segment, listing });
+    // The classifier review reads first sightings; a later sighting repeats the same decision.
+    if (!before) {
+      samples.push({
+        feedId: ctx.feedId,
+        segment: productKey,
+        title: sighting.summary.title ?? "",
+        landedCents: listing?.landedCents ?? null,
+        outcome: match.outcome === "candidate" ? "candidate" : "rejected",
+        reason: match.outcome === "candidate" ? null : match.outcome,
+        seenAt: ctx.now,
+      });
+    }
+    const limit = match.conditionGroup === null ? undefined : chosen?.limits.get(match.conditionGroup);
+    if (decision.makeCandidate && chosen && listing && match.conditionGroup && limit) {
+      toCandidates.push({
+        ...sighting,
+        listing,
+        product: chosen.product,
+        match,
+        firstSeenAt: firstSeen(key.itemKey),
+        productFields: {
+          productVersion: chosen.product.version,
+          matchVersion: chosen.product.matchVersion,
+          conditionGroup: match.conditionGroup,
+          limitCents: limit.limitCents,
+          priceMode: limit.priceMode,
+          marketValueId: limit.marketValue?.id ?? null,
+        },
+      });
+    }
   }
-
-  // The classifier review (AC-29) reads first sightings; a later sighting repeats the same decision.
-  const samples: ClassifierSampleRow[] = firstSightings.map(({ summary, listing, classification }) => ({
-    feedId: ctx.feedId,
-    segment: classification.segment,
-    title: summary.title ?? "",
-    landedCents: listing?.landedCents ?? null,
-    outcome: classification.outcome === "candidate" ? "candidate" : "rejected",
-    reason: classification.outcome === "rejected" ? classification.reason : null,
-    seenAt: ctx.now,
-  }));
 
   await inTransaction(deps.pool, async (client) => {
     // Rows are locked in key order, so a poll and a sweep on the same items never deadlock.
@@ -341,15 +413,13 @@ export async function processPage(
 
   for (const candidate of toCandidates) {
     const listingId = await createCandidate(deps, candidate, ctx);
-    // null: another run made the item a candidate first (section 2.4, candidate once).
+    // null: another run made the item a candidate first (candidate once).
     if (listingId === null) continue;
     run.counts.candidates += 1;
-    deps.log.info({ event: "candidate_created", listing_id: listingId, segment: candidate.segment, source: ctx.source });
+    deps.log.info({ event: "candidate_created", listing_id: listingId, segment: candidate.product.key, source: ctx.source });
   }
   return { allUnseen: firstSightings.length === sightings.size };
 }
-
-type NewCandidate = Sighting & { segment: Segment; listing: ListingCandidate };
 
 function summaryContent(summary: ItemSummary, listing: ListingCandidate): ListingContentInput {
   return {
@@ -373,9 +443,9 @@ function summaryContent(summary: ItemSummary, listing: ListingCandidate): Listin
 
 // One transaction per new candidate: only the run whose claim returns a row writes the listing, its
 // summary content, the candidate and the enrich job, so a crash before commit leaves no job and
-// no row.
+// no row. rule_version holds the product version the candidate passed.
 async function createCandidate(deps: SearchDeps, candidate: NewCandidate, ctx: PageContext): Promise<string | null> {
-  const { key, summary, listing, segment, classification } = candidate;
+  const { key, summary, listing, product, match } = candidate;
   return inTransaction(deps.pool, async (client) => {
     if (!(await claimCandidate(client, key.itemKey, ctx.now))) return null;
     const listingId = await insertListing(client, {
@@ -383,8 +453,8 @@ async function createCandidate(deps: SearchDeps, candidate: NewCandidate, ctx: P
       itemId: listing.itemId,
       legacyItemId: listing.legacyItemId,
       feedId: ctx.feedId,
-      segment,
-      firstSeenAt: ctx.now,
+      segment: product.key,
+      firstSeenAt: candidate.firstSeenAt,
       itemCreationAt: listing.itemCreationAt,
       itemEndAt: listing.itemEndAt,
       contentExpiresAt: listing.contentExpiresAt,
@@ -394,62 +464,79 @@ async function createCandidate(deps: SearchDeps, candidate: NewCandidate, ctx: P
       itemKey: key.itemKey,
       listingId,
       feedId: ctx.feedId,
-      segment,
+      segment: product.key,
       source: ctx.source,
       priceCents: listing.priceCents,
       shippingCents: listing.shippingCents,
       landedCents: listing.landedCents,
       shippingKnown: listing.shippingKnown,
-      totalGb: classification.totalGb,
-      ruleVersion: ctx.rules[segment].ruleVersion,
-      flags: classification.outcome === "candidate" ? classification.flags : [],
+      totalGb: match.unitTotal,
+      ruleVersion: product.version,
+      flags: match.flags,
       createdAt: ctx.now,
+      ...candidate.productFields,
     });
     await deps.queue.send("enrich", { listingId }, { db: client });
     return listingId;
   });
 }
 
-// Section 3.2: one poll of a feed, sort=newlyListed, the feed's price filter. A feed without any
-// seen_item row polls a baseline: page 1 only, nothing becomes a candidate. Otherwise page 2 and 3
-// follow only while every item of the page before was unseen, within the daily overflow limit.
-export function createPollHandler(deps: SearchDeps): JobHandler<"poll"> {
-  return async ({ feedId }, job) => {
-    const now = deps.clock.now();
-    const [feeds, rules] = await Promise.all([listFeeds(deps.pool), listSegmentRules(deps.pool)]);
-    const feed = feeds.find((f) => f.id === feedId);
-    if (feed === undefined) throw new Error(`feed ${feedId} is not configured`);
-    const baseline = !(await feedHasSeenItems(deps.pool, feedId));
-    const start: PollRunStart = { kind: "poll", feedId, baseline, startedAt: now };
-    const logFields = { feed: feedId, kind: "poll", baseline };
+// Spec 9: the products a search serves, as they are now. Archived or draft products have left
+// the search with the save that changed them.
+const isPolled = (product: StoredProduct): boolean => product.rules.status === "active" || product.rules.status === "paused";
 
-    await trackRun(deps, start, { enabled: feed.enabled, signal: job.signal, logFields }, async (run) => {
-      const ctx: PageContext = { feedId, source: "poll", baseline, rules: rulesBySegment(rules), now };
-      const price = pollPriceFilter(feed, rules);
-      const overflowUsed = await overflowPagesSince(deps.pool, feedId, startOfBerlinDay(now));
-      for (let page = 1; ; page += 1) {
-        const request = buildFeedSearch({
-          q: feed.q,
-          categoryId: feed.categoryId,
-          conditionIds: feed.conditionIds,
-          price,
-          sort: "newlyListed",
-          offset: (page - 1) * FEED_PAGE_LIMIT,
-          postalCode: deps.postalCode,
-        });
-        const result = await run.fetch(request, "poll");
-        const { allUnseen } = await processPage(deps, run, result, ctx);
-        const next = nextPageDecision({
-          page,
-          allUnseen,
-          hasMore: result.next !== undefined,
-          baseline,
-          overflowPagesUsedToday: overflowUsed + page - 1,
-          overflowPagesPerDay: feed.overflowPagesPerDay,
-        });
-        if (next.capReached) run.counts.capReached = true;
-        if (!next.fetchNext) return;
-      }
-    });
+// Spec 5.1, 5.5: one poll of a search, sort=newlyListed, its price filter. Page 2 and 3 follow
+// only while every item of the page before was unseen, within the search's daily overflow pages.
+export function createPollHandler(deps: SearchDeps): JobHandler<"poll"> {
+  return async ({ searchId }, job) => {
+    const now = deps.clock.now();
+    const [search, products, resolved] = await Promise.all([
+      loadSearch(deps.pool, searchId),
+      listProducts(deps.pool),
+      loadSettings(deps.pool, deps.settingsEnv),
+    ]);
+    const members = products.filter((product) => search?.productIds.includes(product.id) === true && isPolled(product));
+    const pollable = search && search.enabled && !search.retired && members.length > 0 ? search : null;
+    const start: PollRunStart = { kind: "poll", feedId: searchId, baseline: false, startedAt: now };
+    const ctx: PageContext = {
+      feedId: searchId,
+      source: "poll",
+      products: members,
+      lowFeedbackBelow: resolved.settings.lowFeedbackBelow,
+      now,
+    };
+    await trackRun(
+      deps,
+      start,
+      { signal: job.signal, logFields: { search: searchId, kind: "poll" } },
+      pollable && ((run) => readPages(deps, run, pollable, ctx)),
+    );
   };
+}
+
+async function readPages(deps: SearchDeps, run: SearchRun, search: SearchRow, ctx: PageContext): Promise<void> {
+  const overflowUsed = await overflowPagesSince(deps.pool, search.id, startOfBerlinDay(ctx.now));
+  for (let page = 1; ; page += 1) {
+    const request = buildFeedSearch({
+      q: search.q,
+      categoryId: search.categoryId,
+      conditionIds: search.conditionIds,
+      price: { floorEur: search.floorEur, ceilingEur: search.ceilingEur },
+      sort: "newlyListed",
+      offset: (page - 1) * FEED_PAGE_LIMIT,
+      postalCode: deps.postalCode,
+    });
+    const result = await run.fetch(request, "poll");
+    const { allUnseen } = await processPage(deps, run, result, ctx);
+    const next = nextPageDecision({
+      page,
+      allUnseen,
+      hasMore: result.next !== undefined,
+      baseline: false,
+      overflowPagesUsedToday: overflowUsed + page - 1,
+      overflowPagesPerDay: OVERFLOW_PAGES_PER_SEARCH,
+    });
+    if (next.capReached) run.counts.capReached = true;
+    if (!next.fetchNext) return;
+  }
 }
