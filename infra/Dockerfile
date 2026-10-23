@@ -1,4 +1,4 @@
-FROM node:24.21.0-alpine AS base
+FROM node:24.22.0-alpine AS base
 RUN npm install -g pnpm@12.12.1
 WORKDIR /repo
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
@@ -38,7 +38,7 @@ RUN pnpm --filter "@ebay-sniper/server..." --filter "@ebay-sniper/ops..." --filt
 
 # One image for the server, the worker, the web service and the migrate one-off (apps/ops), tagged
 # ebay-sniper-server:<sha>. Compose picks the app with working_dir and command.
-FROM node:24.21.0-alpine
+FROM node:24.22.0-alpine
 ARG GIT_SHA
 RUN test -n "$GIT_SHA" || { echo "GIT_SHA build arg is required" >&2; exit 1; }
 ENV GIT_SHA=$GIT_SHA
