@@ -13,6 +13,8 @@ const NEL = char(0x0085);
 const NBSP = char(0x00a0);
 const THIN_SPACE = char(0x2009);
 const COMBINING_DIAERESIS = char(0x0308);
+const COMBINING_ACUTE = char(0x0301);
+const COMBINING_GRAVE_BELOW = char(0x0316);
 
 describe("cleanText", () => {
   it("collapses whitespace runs and trims", () => {
@@ -62,6 +64,12 @@ describe("cleanText", () => {
     const result = cleanText(`Zubeho${ZWSP}${COMBINING_DIAERESIS}r`, 200);
     expect(result.text).toBe("Zubehör");
     expect(result.text).toHaveLength(7);
+  });
+
+  it("keeps at most 30 combining marks in a row, so normalizing stays fast", () => {
+    // NFC sorts each run of marks by class, in time that grows with the square of the run.
+    const result = cleanText(`a${COMBINING_ACUTE.repeat(20_000)}${COMBINING_GRAVE_BELOW.repeat(20_000)}b`, 200);
+    expect(result.text).toBe(`a${COMBINING_ACUTE.repeat(30)}b`.normalize("NFC"));
   });
 
   it.each([

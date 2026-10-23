@@ -49,6 +49,20 @@ describe("parseAlertEmail on the sanitized fixtures", () => {
     expect(await parseAlertEmail(raw, OPTIONS)).toEqual({ ok: false, reason: "malformed", detail: "mime_parse_failed" });
   });
 
+  it("does not read an alert out of a message attached to the email", async () => {
+    // postal-mime would render an attached message into the HTML, headers included; nested ones made
+    // a 570 KB message need more heap than the worker has.
+    const alert = buildAlertEmail();
+    const split = alert.indexOf("\r\n\r\n");
+    const headers = alert
+      .slice(0, split)
+      .replace("Content-Type: text/html; charset=utf-8", 'Content-Type: multipart/mixed; boundary="b"')
+      .replace("\r\nContent-Transfer-Encoding: 8bit", "");
+    const attached = `Content-Type: text/html; charset=utf-8\r\n\r\n${alert.slice(split + 4)}`;
+    const raw = `${headers}\r\n\r\n--b\r\nContent-Type: message/rfc822\r\n\r\n${attached}\r\n--b--\r\n`;
+    expect(await parseAlertEmail(raw, OPTIONS)).toEqual({ ok: false, reason: "malformed", detail: "no_html" });
+  });
+
   it("rejects an alert without Message-ID", async () => {
     const raw = fixture("alert-gpu-negotiable.eml")
       .toString("utf8")

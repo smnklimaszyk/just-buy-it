@@ -13,7 +13,7 @@ Headers keep their order and names. Replaced:
 - The sender's internal host names in `Received` with `saved-search-application-fixture`, `desktop-fixture` and `recvd-fixture`.
 - Removed: `X-SG-*`, `X-Entity-ID`, `X-Spam*` and `X-Rspamd-*`.
 
-Kept as sent: the `Authentication-Results` wording, `From`, `Date`, `Subject` (the saved-search labels are our own search terms), the MIME headers and the other `Received` lines.
+Kept as sent: the `Authentication-Results` wording, `From`, `Date`, `Subject` (the saved-search labels are our own search terms), the MIME headers and the other `Received` lines. Those include our LMTP hop with the mail host's local name, and the sender's relay host names and private addresses; ADR 0036 accepts both as published.
 
 The body was decoded from quoted-printable, changed, and encoded again with CRLF line ends and the sender's line length. Replaced:
 

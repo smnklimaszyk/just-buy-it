@@ -35,6 +35,9 @@ const KINDS: readonly [RegExp, HiddenCharacterKind][] = [
   [/[\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}\u{180B}-\u{180D}\u{180F}]/u, "variation_selector"],
 ];
 
+const MAX_MARK_RUN = 30;
+const MARK_RUN_TAIL = new RegExp(`(\\p{M}{${MAX_MARK_RUN}})\\p{M}+`, "gu");
+
 function kindOf(char: string): HiddenCharacterKind {
   return KINDS.find(([pattern]) => pattern.test(char))?.[1] ?? "other_invisible";
 }
@@ -50,8 +53,16 @@ export function cleanText(input: string, maxChars: number): CleanedText {
     return false;
   });
   // Normalize after removal: a hidden character between a letter and its combining mark blocks
-  // composition, so normalizing first would leave "o" + U+0308 where "ö" is expected.
-  const collapsed = visible.join("").normalize("NFC").replace(/\s+/gu, " ").trim();
+  // composition, so normalizing first would leave "o" + U+0308 where "ö" is expected. NFC sorts each
+  // run of combining marks, in time that grows with the square of the run, so a run keeps its first
+  // MAX_MARK_RUN marks and drops the rest. 30 is the run length Unicode's stream-safe text format
+  // allows; no real title comes near it.
+  const collapsed = visible
+    .join("")
+    .replace(MARK_RUN_TAIL, "$1")
+    .normalize("NFC")
+    .replace(/\s+/gu, " ")
+    .trim();
   const codePoints = Array.from(collapsed);
   const truncated = codePoints.length > maxChars;
   return {
