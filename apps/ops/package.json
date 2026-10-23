@@ -14,7 +14,7 @@
     "@ebay-sniper/domain": "workspace:*",
     "@ebay-sniper/llm": "workspace:*",
     "@ebay-sniper/logging": "workspace:*",
-    "zod": "4.6.6"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

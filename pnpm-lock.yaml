@@ -200,8 +200,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/logging
       zod:
-        specifier: 4.6.6
-        version: 4.6.6
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
       '@types/node':
         specifier: 24.19.2
@@ -234,8 +234,8 @@ importers:
         specifier: 4.13.13
         version: 4.13.13
       zod:
-        specifier: 4.6.6
-        version: 4.6.6
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
       '@types/node':
         specifier: 24.19.2
@@ -274,8 +274,8 @@ importers:
         specifier: 4.13.13
         version: 4.13.13
       zod:
-        specifier: 4.6.6
-        version: 4.6.6
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
       '@types/node':
         specifier: 24.19.2
@@ -314,8 +314,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/notify
       zod:
-        specifier: 4.6.6
-        version: 4.6.6
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
       '@types/node':
         specifier: 24.19.2
@@ -385,8 +385,8 @@ importers:
   packages/ebay:
     dependencies:
       zod:
-        specifier: 4.6.6
-        version: 4.6.6
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
       '@types/node':
         specifier: 24.19.2
@@ -432,8 +432,8 @@ importers:
         specifier: workspace:*
         version: link:../domain
       zod:
-        specifier: 4.6.6
-        version: 4.6.6
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
       '@types/node':
         specifier: 24.19.2
@@ -476,8 +476,8 @@ importers:
         specifier: 10.1.1
         version: 10.1.1
       zod:
-        specifier: 4.6.6
-        version: 4.6.6
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
       '@types/node':
         specifier: 24.19.2
@@ -2909,6 +2909,9 @@ packages:
   zod@4.6.6:
     resolution: {integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==}
 
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
+
 snapshots:
 
   '@anthropic-ai/claude-agent-sdk@0.2.112(supports-color@7.2.0)(zod@4.6.6)':
@@ -4874,3 +4877,5 @@ snapshots:
       zod: 4.6.6
 
   zod@4.6.6: {}
+
+  zod@4.6.7: {}
