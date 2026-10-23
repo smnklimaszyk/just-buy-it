@@ -5,8 +5,10 @@
 # limit; every other path of the host goes to web at 10 (spec 7.10, ADR 0038).
 # The server rate limit is far above eBay's own traffic (at most about 1,500 deletion notifications
 # a day), so retries from eBay are never refused; it only stops floods.
-# Request bodies over 64 KB get a 413 here (buffering middleware) on every router; the apps refuse
-# them too.
+# Request bodies over 64 KB get a 413 here (buffering middleware) on the server router. The web
+# routers go without it: the buffering middleware answers 500 to a reply with an empty body, such
+# as web's 303 redirects ("failed to read response, err: no data ready"), and web refuses bodies
+# over 64 KB itself (413).
 # Rollback to Release 0: put the previous file back, or every path but the three server paths
 # gives 502 once the deploy has stopped web.
 
@@ -55,7 +57,6 @@ http:
       middlewares:
         - hsts-headers
         - ebay-sniper-login-ratelimit
-        - ebay-sniper-body-limit
 
     # Everything else on the host is the admin UI (spec 7.1).
     ebay-sniper-web-http:
@@ -78,7 +79,6 @@ http:
       middlewares:
         - hsts-headers
         - ebay-sniper-web-ratelimit
-        - ebay-sniper-body-limit
 
   middlewares:
     ebay-sniper-ratelimit:
