@@ -31,7 +31,9 @@ describe("infra/traefik/ebay-sniper.yml", () => {
   });
 
   // A sign-in or code POST gets the tight per-IP limit before it reaches web's own counters.
-  it("sends POSTs under /login to web at priority 50 with the login rate limit and the body limit", () => {
+  // No buffering middleware on web's routers: it answers 500 to web's empty-bodied 303 redirects
+  // ("no data ready"); web refuses bodies over 64 KB itself.
+  it("sends POSTs under /login to web at priority 50 with the login rate limit and no buffering", () => {
     const rule = "      rule: \"Host(`deals.intra-ai.de`) && PathPrefix(`/login`) && Method(`POST`)\"";
     const https = entry("ebay-sniper-login-https");
 
@@ -46,7 +48,6 @@ describe("infra/traefik/ebay-sniper.yml", () => {
       "      middlewares:",
       "        - hsts-headers",
       "        - ebay-sniper-login-ratelimit",
-      "        - ebay-sniper-body-limit",
     ]);
     expect(entry("ebay-sniper-login-http")).toEqual([
       rule,
@@ -61,7 +62,7 @@ describe("infra/traefik/ebay-sniper.yml", () => {
   });
 
   // Every other path of the host is the admin UI, which sends a browser without a session to /login.
-  it("sends the rest of the host to web on 127.0.0.1:3141 at priority 10 with the web rate limit and the body limit", () => {
+  it("sends the rest of the host to web on 127.0.0.1:3141 at priority 10 with the web rate limit and no buffering", () => {
     const rule = "      rule: \"Host(`deals.intra-ai.de`)\"";
 
     expect(entry("ebay-sniper-web-https")).toEqual([
@@ -75,7 +76,6 @@ describe("infra/traefik/ebay-sniper.yml", () => {
       "      middlewares:",
       "        - hsts-headers",
       "        - ebay-sniper-web-ratelimit",
-      "        - ebay-sniper-body-limit",
     ]);
     expect(entry("ebay-sniper-web-http")).toEqual([
       rule,
