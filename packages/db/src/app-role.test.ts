@@ -165,10 +165,12 @@ describe("role lock", () => {
       Array.from({ length: 5 }, () => createTestDatabase(adminUrl, { from: "empty" })),
     );
     try {
+      // Each run holds the role lock for its whole Drizzle step (about 1.5 s with the v2
+      // migrations), so the fifth waits about four of them: 120 tries 100 ms apart cover that.
       await Promise.all(
-        others.map((other) => runMigrations({ connectionString: other.url, log: () => undefined, lockRetryMs: 20 })),
+        others.map((other) => runMigrations({ connectionString: other.url, log: () => undefined, lockRetryMs: 100 })),
       );
-      await Promise.all(others.map((other) => setAppRolePassword(other.url, APP_PASSWORD, { lockRetryMs: 20 })));
+      await Promise.all(others.map((other) => setAppRolePassword(other.url, APP_PASSWORD, { lockRetryMs: 100 })));
 
       const client = await connectAsApp(APP_PASSWORD);
       await client.end();
