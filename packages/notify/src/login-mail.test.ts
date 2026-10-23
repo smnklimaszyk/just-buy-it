@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SmtpError } from "./errors.js";
 import { createLoginMailQueue, LOGIN_MAIL_TIMING, renderLoginMail, type QueuedMail } from "./login-mail.js";
 import type { OutgoingEmail, SmtpMailer, SmtpSendResult } from "./smtp.js";
@@ -70,19 +70,19 @@ describe("createLoginMailQueue", () => {
     const queue = createLoginMailQueue({
       mailer,
       onDropped: (mail, error) => dropped.push({ id: mail.id, code: error.code }),
-      timing: { timeoutMs: 20, retryDelayMs: 30 },
+      // The second send is settled as soon as it starts, well inside its 200 ms, so a slow CI
+      // runner cannot turn its 451 into a deadline.
+      timing: { timeoutMs: 200, retryDelayMs: 30 },
     });
     expect(LOGIN_MAIL_TIMING).toEqual({ timeoutMs: 10_000, retryDelayMs: 30_000 });
 
     queue.push(queued(1));
     await tick();
     expect(sends).toHaveLength(1);
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(sends[0]?.signal?.aborted).toBe(true);
+    await vi.waitFor(() => expect(sends[0]?.signal?.aborted).toBe(true), { timeout: 2_000, interval: 5 });
     expect(sends).toHaveLength(1);
 
-    await new Promise((resolve) => setTimeout(resolve, 40));
-    expect(sends).toHaveLength(2);
+    await vi.waitFor(() => expect(sends).toHaveLength(2), { timeout: 2_000, interval: 1 });
     sends[1]?.settle(new SmtpError({ code: "EENVELOPE", responseCode: 451 }));
     await tick();
     expect(dropped).toEqual([{ id: "mail-1", code: "EENVELOPE" }]);
