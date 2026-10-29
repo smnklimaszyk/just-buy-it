@@ -473,8 +473,8 @@ importers:
         specifier: workspace:*
         version: link:../domain
       nodemailer:
-        specifier: 10.1.1
-        version: 10.1.1
+        specifier: 10.2.1
+        version: 10.2.1
       zod:
         specifier: 4.6.6
         version: 4.6.6
@@ -2333,8 +2333,8 @@ packages:
     resolution: {integrity: sha512-NMPBRMJgiQHjbd8phG3Vebdx4kZ1H121rbl5IkMqeOsahptB9BKo/d7oJ3zTXqTgagn2bWlNSXkh0QUGM31RYg==}
     engines: {node: '>=18'}
 
-  nodemailer@10.1.1:
-    resolution: {integrity: sha512-pbqZRoeYUO+1E8TJ/11WeY4D2EVujj1hsYjz3qff/vUFDtGnmi7p3iqzTFslYOfQ6PnjVcWxx/CIUSHCSrO/QA==}
+  nodemailer@10.2.1:
+    resolution: {integrity: sha512-ZrDNsPFoDMwefNs7sJwrYiEJ/CG4ClJWDZv05iNJsEBWa8GRDry1QJHTJxsuTAY9eDDKjX4k+q3SxslXJOao7w==}
     engines: {node: '>=20.0.0'}
 
   non-error@0.1.0:
@@ -4336,7 +4336,7 @@ snapshots:
     dependencies:
       content-type: 2.1.0
 
-  nodemailer@10.1.1: {}
+  nodemailer@10.2.1: {}
 
   non-error@0.1.0: {}
 
